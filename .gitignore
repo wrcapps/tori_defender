@@ -1,0 +1,26 @@
+# Camera credentials live in these. Only config.example.yaml is tracked.
+config.yaml
+config.*.yaml
+!config.example.yaml
+
+# Login credentials (password hashes). Only users.example.yaml is tracked.
+users.yaml
+
+# Client app: build output and installed packages, not source.
+client/node_modules/
+client/dist/
+
+# ffmpeg/OpenCV echo the full RTSP URL, password included, when a stream fails.
+logs/
+*.log
+*.out
+
+# Captured frames, detections, model weights.
+sites/
+*.pt
+*.pth
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/

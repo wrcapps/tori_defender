@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>live detections</title>
+<link rel="stylesheet" href="/static/app.css">
+
+<header>
+  <h1 id="title">live detections</h1>
+  <nav class="tabs">
+    <a href="/">Review</a>
+    <a href="/live" class="cur">Live</a>
+    <a href="/dataset">Dataset</a>
+  </nav>
+  <span class="hint" id="shortcuts">
+    ticking a camera starts its capture process; it stops a little after the
+    last viewer leaves, unless it is recording
+  </span>
+  <span class="hint" id="livestatus"></span>
+</header>
+
+<div class="app">
+  <nav id="folders" class="cameras">
+    <div class="navhead">
+      <span>Cameras</span>
+      <button id="allbtn" title="show or hide every camera">all</button>
+    </div>
+    <div id="camlist" class="folderlist"></div>
+    <div class="navfoot">
+      <div class="hint">
+        Ticking a camera starts pulling its stream and running the model on it
+        (a few seconds to load). <b>record</b> additionally saves its
+        detections to disk and sends them to Review, and keeps it running even
+        with the box unticked. Both off by default.
+      </div>
+    </div>
+  </nav>
+
+  <main id="grid" class="grid">
+    <div class="empty">Pick a camera on the left.</div>
+  </main>
+</div>
+
+<script>window.APP_CONFIG = __APP_CONFIG__;</script>
+<script src="/static/live.js"></script>

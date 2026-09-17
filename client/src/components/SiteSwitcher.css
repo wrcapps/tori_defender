@@ -1,0 +1,28 @@
+.site-switcher {
+  display: inline-flex;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  gap: 2px;
+}
+
+.site-switcher-btn {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-transform: capitalize;
+  transition: background var(--transition), color var(--transition);
+}
+
+.site-switcher-btn:hover { color: var(--text); }
+
+.site-switcher-btn.is-active {
+  background: var(--brand);
+  color: #1a0e04;
+}

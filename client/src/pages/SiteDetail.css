@@ -1,0 +1,122 @@
+.site-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.live-banner {
+  background: rgba(255, 176, 32, 0.1);
+  border: 1px solid rgba(255, 176, 32, 0.35);
+  color: var(--warn);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-size: 13px;
+}
+
+.site-detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.site-detail-watchall {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+
+.capacity-note {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.capacity-note.is-over {
+  color: var(--warn);
+}
+
+.watch-all-btn {
+  display: inline-block;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  text-decoration: none;
+  border-radius: var(--radius-md);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.watch-all-btn:hover { border-color: var(--brand-border); color: var(--brand); }
+
+.site-detail-back {
+  color: var(--text-faint);
+  text-decoration: none;
+  font-size: 13px;
+}
+.site-detail-back:hover { color: var(--text); }
+
+.site-detail-title {
+  margin: 0;
+  text-transform: capitalize;
+}
+
+.site-detail-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.site-detail-map {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  position: sticky;
+  top: calc(56px + var(--space-4));
+}
+
+.site-detail-cameras {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.mast-group {
+  transition: opacity var(--transition);
+}
+
+.mast-group.is-dimmed {
+  opacity: 0.35;
+}
+
+.mast-group-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  margin-bottom: var(--space-2);
+}
+
+.mast-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.mast-camera-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
+@media (max-width: 900px) {
+  .site-detail-layout {
+    grid-template-columns: 1fr;
+  }
+  .site-detail-map {
+    position: static;
+  }
+}

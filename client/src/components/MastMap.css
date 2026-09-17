@@ -1,0 +1,68 @@
+.mast-map {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-4);
+  background:
+    radial-gradient(circle at 50% 50%, var(--brand-bg) 0%, var(--surface-2) 45%, var(--surface) 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.mast-map svg {
+  width: 100%;
+  max-width: 280px;
+}
+
+.mast-map-node {
+  cursor: pointer;
+}
+
+.mast-map-node circle {
+  transition: filter var(--transition), stroke-width var(--transition);
+}
+
+.mast-map-node:hover circle,
+.mast-map-node.is-active circle {
+  filter: drop-shadow(0 0 6px currentColor);
+  stroke-width: 3.5;
+}
+
+.mast-map-node-label {
+  fill: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  font-family: var(--font);
+  pointer-events: none;
+}
+
+.mast-map-caption {
+  margin: var(--space-3) 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  text-align: center;
+}
+
+.mast-map-single {
+  padding: var(--space-6) var(--space-4);
+}
+
+.mast-node {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 2.5px solid var(--node-color, var(--text-faint));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 0 6px var(--node-color, transparent));
+}
+
+.mast-node-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--node-color, var(--text-faint));
+}

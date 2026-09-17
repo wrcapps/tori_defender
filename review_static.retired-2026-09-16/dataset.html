@@ -1,0 +1,58 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>training set review</title>
+<link rel="stylesheet" href="/static/app.css">
+
+<header>
+  <h1 id="title">training set</h1>
+  <nav class="tabs">
+    <a href="/">Review</a>
+    <a href="/live">Live</a>
+    <a href="/dataset" class="cur">Dataset</a>
+  </nav>
+  <span class="counts" id="counts"></span>
+  <span class="hint" id="shortcuts">
+    click a label to reject it &nbsp; <b>click again</b> to undo &nbsp;
+    <b>shift</b>+click for the whole tile &nbsp; <b>N</b> next page
+  </span>
+</header>
+<div class="bar"><div id="bar"></div></div>
+
+<div class="app">
+  <nav id="folders">
+    <div class="navhead"><span>What to look at</span></div>
+    <div id="catlist" class="folderlist"></div>
+    <div class="navfoot">
+      <label class="checkline">
+        <input type="checkbox" id="hidedone"> hide ones I have judged
+      </label>
+      <div class="hint" id="datasetpath"></div>
+    </div>
+  </nav>
+
+  <div class="viewer">
+    <div class="toolbar">
+      <button id="prevpage">&larr; prev</button>
+      <span id="pagelabel" class="hint">&mdash;</span>
+      <button id="nextpage">next &rarr;</button>
+      <span id="cathelp" class="hint"></span>
+      <span id="status" class="hint right"></span>
+    </div>
+
+    <div id="grid" class="dsgrid"></div>
+  </div>
+</div>
+
+<div id="lightbox" class="lightbox" hidden>
+  <div class="lbinner">
+    <img id="lbimg" alt="full tile">
+    <div class="lbbar">
+      <span id="lbinfo" class="hint"></span>
+      <button id="lbreject">reject this label</button>
+      <button id="lbclose">close</button>
+    </div>
+  </div>
+</div>
+
+<script>window.APP_CONFIG = __APP_CONFIG__;</script>
+<script src="/static/dataset.js"></script>

@@ -1,0 +1,59 @@
+/* Design tokens.
+   Palette: near-black slate (video-monitoring UIs read better with dark
+   chrome around the footage -- glare and false color-contrast against a
+   bright frame is the reason virtually every camera/security product in
+   this genre is dark, not a stylistic default) plus two accents that mean
+   two different things and are deliberately never the same hue:
+     --accent (green)  status: live / confirmed / healthy -- an almost
+                        universal convention in monitoring UIs, kept
+                        separate from brand so "is it working" is never
+                        ambiguous with "is it selected".
+     --brand  (orange)  identity: active nav, primary buttons, section-tick
+                        labels -- carried over from the reference interface
+                        (github.com/ionuttale/Birds_GUI) the project owner
+                        pointed at as the liked look; its signature motif
+                        was one brand color used consistently for
+                        active/primary state plus a small tick mark before
+                        every all-caps section label (see .tick-label below).
+   System fonts only: no webfont fetch, consistent with this whole project's
+   stance that a viewer's bandwidth is not something to spend casually
+   (see PERFORMANCE.md). */
+:root {
+  --bg: #0b0f14;
+  --surface: #121821;
+  --surface-2: #1a2230;
+  --surface-3: #212b3a;
+  --border: #26303e;
+  --text: #eef2f6;
+  --text-dim: #9aa7b6;
+  --text-faint: #64748b;
+
+  --accent: #35d48a;       /* live / confirmed / healthy */
+  --accent-dim: #1c7a52;
+  --brand: #ff8a3d;        /* identity: active nav, primary actions, ticks */
+  --brand-bg: rgba(255, 138, 61, 0.10);
+  --brand-border: rgba(255, 138, 61, 0.30);
+  --warn: #ffb020;         /* stale / degraded */
+  --warn-dim: #8a6316;
+  --danger: #ff5470;       /* offline / error */
+  --danger-dim: #8a2b3d;
+  --info: #4fa6ff;
+
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --transition: 160ms cubic-bezier(.2, .8, .2, 1);
+}

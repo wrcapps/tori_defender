@@ -1,0 +1,112 @@
+@import "./tokens.css";
+
+/* Shared empty/loading/error page states -- every page that fetches data
+   uses these same three classes rather than inventing its own each time. */
+.state-page {
+  padding: var(--space-7) var(--space-4);
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.state-page h2 { color: var(--text); margin-bottom: var(--space-2); }
+
+.skeleton-block {
+  border-radius: var(--radius-lg);
+  background: linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%);
+  background-size: 200% 100%;
+  animation: skeleton-sheen 1.4s ease-in-out infinite;
+  border: 1px solid var(--border);
+}
+
+@keyframes skeleton-sheen {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; }
+
+button {
+  font-family: inherit;
+}
+
+/* Visible keyboard focus everywhere -- this app is meant to be usable
+   end-to-end by keyboard (product-design: accessible-name + keyboard-complete
+   flow), and a removed default outline with nothing put back is the single
+   most common accessibility regression in a from-scratch UI. */
+:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 999px; }
+
+/* Section-title tick: an uppercase, letter-spaced label prefixed by a small
+   brand-colored bar. Borrowed verbatim from the reference interface's most
+   repeated motif -- reused here for every sidebar/section heading so the
+   whole app reads as one system rather than a page-by-page patchwork. */
+.tick-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.tick-label::before {
+  content: "";
+  width: 2px;
+  height: 12px;
+  background: var(--brand);
+  display: inline-block;
+  border-radius: 1px;
+}
+
+/* Hover-lift: the interactive-card recipe used for anything that navigates
+   somewhere (a site card, a mast/camera-group card). */
+.hover-lift {
+  transition: border-color var(--transition), background var(--transition),
+             transform var(--transition), box-shadow var(--transition);
+}
+
+.hover-lift:hover {
+  border-color: var(--brand-border);
+  background: var(--brand-bg);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-card);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
