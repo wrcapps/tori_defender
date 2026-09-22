@@ -92,7 +92,8 @@ from model_infer import fit_width, save_crop, write_jpeg
 from sitepaths import add_sites_root_argument, site_dir
 
 HERE = Path(__file__).resolve().parent
-CLIENT_DIST = HERE / "client" / "dist"
+ROOT = HERE.parent
+CLIENT_DIST = ROOT / "client" / "dist"
 
 # GET paths reachable with no session at all: the client SPA's own shell
 # (index.html + its built JS/CSS) is public -- it is code, not data, and it
@@ -1511,13 +1512,13 @@ def main() -> int:
                     help=f"tiled inferences per second this GPU can sustain, for the "
                          f"soft capacity warning when starting one more camera on demand "
                          f"(default {MEASURED_GPU_FPS:g}, measured at FP16 on 4K frames)")
-    ap.add_argument("--capture-logs", type=Path, default=HERE / "logs",
-                    help=f"where on-demand capture processes log to (default: {HERE / 'logs'})")
+    ap.add_argument("--capture-logs", type=Path, default=ROOT / "logs",
+                    help=f"where on-demand capture processes log to (default: {ROOT / 'logs'})")
     ap.add_argument("--port", type=int, default=8766)
     ap.add_argument("--bind", default="127.0.0.1",
                     help="127.0.0.1 by default; forward the port rather than widening this")
-    ap.add_argument("--users", type=Path, default=HERE / "users.yaml",
-                    help="users file (default: users.yaml next to this script) -- "
+    ap.add_argument("--users", type=Path, default=ROOT / "users.yaml",
+                    help="users file (default: users.yaml at the repo root) -- "
                          "see users.example.yaml; every page and API now requires a "
                          "login, and every mutating API requires the operator role")
     add_sites_root_argument(ap)

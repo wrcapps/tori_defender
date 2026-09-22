@@ -10,6 +10,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Non-secret connection settings can come from nas.env (see nas.example.env);
+# credentials are always asked for interactively below, never read from a file.
+if [ -f nas.env ]; then
+  echo "Using NAS settings from nas.env."
+  set -a; source nas.env; set +a
+fi
+
 TORI_HOST="${TORI_HOST:-192.168.1.138}"
 TORI_SHARE="${TORI_SHARE:-Pasari}"
 MOUNT_POINT="${MOUNT_POINT:-/mnt/Tori}"
@@ -74,5 +81,5 @@ echo
 echo "=== done ==="
 echo "Start the reviewer with:"
 echo "  source .venv/bin/activate"
-echo "  ./app.py --config config.yaml --sites-root ${SITES_ROOT}"
+echo "  ./backend/app.py --config config.yaml --sites-root ${SITES_ROOT}"
 echo "then open http://127.0.0.1:8766/ (forward the port if this is a remote machine)."

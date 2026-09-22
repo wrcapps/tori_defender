@@ -20,7 +20,8 @@ import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_SITES_ROOT = HERE / "sites"
+ROOT = HERE.parent
+DEFAULT_SITES_ROOT = ROOT / "sites"
 
 # A site name becomes a directory, so it may not wander out of the sites root.
 VALID_SITE = re.compile(r"^[a-z0-9][a-z0-9-]*$")

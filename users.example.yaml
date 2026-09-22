@@ -1,18 +1,16 @@
-# Copy to users.yaml and chmod 600 it -- it holds password hashes, not plain
-# text, but treat it like config.yaml anyway: keep it out of git (already in
-# .gitignore) and off shared disks.
+# Copy this file to users.yaml, then chmod 600 it -- it holds password
+# hashes (never plain text passwords), but treat it like config.yaml anyway:
+# keep it out of git (already in .gitignore) and off shared disks.
 #
-# Do not hand-edit password hashes. Add or change a user with:
+# Don't edit this file by hand. Create each login with this command instead
+# (it hashes the password and writes it in):
 #
-#   python auth.py --users users.yaml --add-user alice --role operator
-#   python auth.py --users users.yaml --add-user acme-corp --role client
+#   python backend/auth.py --users users.yaml --add-user alice --role operator
 #
-# Roles:
-#   operator  full access -- Review, Live with recording, Dataset audit.
-#   client    read-only -- Live (no recording toggle), Sightings, Species.
-#             Every mutating API in this app refuses a client-role session,
-#             regardless of what the page in front of them shows.
+# Two roles:
+#   operator  full access: Review, Live (with recording), Dataset audit.
+#   client    read-only: Live (no recording), Sightings, Species.
 #
-# This file is created empty; the two lines below are only here to show the
-# shape apply once real users are added with the command above.
+# This file starts empty (`users: {}`) -- add your first login with the
+# command above and it fills itself in.
 users: {}

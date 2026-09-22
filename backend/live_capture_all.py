@@ -45,6 +45,7 @@ from camera_config import build_cameras, redact_text, select_cameras
 from capacity import MEASURED_GPU_FPS, budget_warning, total_demand
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
 
 # Each process loads its own copy of the model and its own CUDA context before
 # it infers anything, so starting twelve at once spikes VRAM far above the
@@ -148,8 +149,8 @@ def main() -> int:
     ap.add_argument("--bucket", default="live", help="passed through to each capture process")
     ap.add_argument("--sites-root", type=Path, default=None,
                     help="passed through to each capture process")
-    ap.add_argument("--logs", type=Path, default=HERE / "logs",
-                    help=f"where per-camera logs go (default: {HERE / 'logs'})")
+    ap.add_argument("--logs", type=Path, default=ROOT / "logs",
+                    help=f"where per-camera logs go (default: {ROOT / 'logs'})")
     ap.add_argument("--gpu-fps", type=float, default=MEASURED_GPU_FPS,
                     help=f"tiled inferences per second this GPU can sustain "
                          f"(default {MEASURED_GPU_FPS:g}, measured at FP16 on 4K frames)")

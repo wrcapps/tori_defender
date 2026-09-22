@@ -1,100 +1,65 @@
-# Copy to config.yaml and fill in. config.yaml holds camera passwords, so:
+# Copy this file to config.yaml, fill in the fields marked "EDIT THIS", then:
 #   chmod 600 config.yaml
-# It is in .gitignore -- keep it that way.
+# config.yaml holds your camera passwords, so it must never be committed to
+# git (it's already in .gitignore -- keep it that way).
 
-# Decides which <sites-root>/<site>/ directory every script reads and writes.
-# There is deliberately no default: a new installation must not silently write
-# into another one's captures.
+# EDIT THIS. A short lowercase name for this location, e.g. corbu, babadag.
+# It decides where this site's data is saved: sites/<site>/...
+# Two installations must never share a site name, or one would silently write
+# into the other's data.
 site: corbu
 
-# Optional: only meaningful for a site whose link is worth watching
-# separately (e.g. Babadag's WireGuard tunnel). Path to a CSV written by the
-# repo-root link_watch.py tool, relative to this config file. Enables
-# GET /api/link_watch?site=<name>. Leave unset for a site with no tunnel to
-# watch (e.g. Corbu, direct internet) -- has zero effect if absent.
-# link_watch_csv: ../link_watch.csv
-
 model:
-  # The finetuned single-class (bird) YOLO weights. Trained on native-resolution
-  # 640px tiles, which is why inference tiles the frame instead of resizing it.
+  # EDIT THIS. Path to the trained detection model (given to you separately).
   weights: weights/best.pt
 
 capture:
-  # Applied to the decoded frame before anything else. Use this when a camera is
-  # physically mounted rotated and cannot correct itself.
-  rotate: none          # none | ccw | cw
+  # Only needed if a camera is physically mounted rotated and can't fix that
+  # itself. none | ccw | cw
+  rotate: none
 
+# Login for every camera below, unless a camera overrides it (see the
+# commented-out example at the bottom of `cameras:`).
 defaults:
+  # EDIT THIS. The camera's own login, not this app's users.yaml login.
   username: admin
   password: CHANGE_ME
 
-  # The main 4K stream. {host} is substituted per camera.
-  #
-  # NOT the substream: a bird here is 10-45px in a 4K frame, which the 640x360
-  # substream shrinks to 2-7px -- below anything the model has been trained on.
-  # NOT the NVR either: its playback endpoint replays the archive from the
-  # oldest recording instead of live footage, and its live RTSP does not decode.
+  # The camera's main (not "sub") stream. {host} is replaced per camera below.
+  # Leave this alone unless your cameras use a different RTSP path.
   record_url: "rtsp://{host}:554/Streaming/Channels/101"
 
-  live:
-    # ---- steady state -----------------------------------------------------
-    # How often a frame is pulled and run through the model while nothing is
-    # happening. This is the idle GPU and bandwidth cost, paid per camera, all
-    # day. Raising it finds fast birds sooner and saturates the GPU sooner.
-    scan_fps: 1.0
+  # -------------------------------------------------------------------------
+  # Advanced: how densely a camera is scanned/recorded. Leave these as they
+  # are unless you were told to change them for a specific site. Applies to
+  # every camera; a single camera can override any of these (see `cameras:`
+  # below).
+  # -------------------------------------------------------------------------
+  # live:
+  #   scan_fps: 1.0            # frames/sec checked while idle (per-camera GPU cost)
+  #   save_fps: 4.0            # frames/sec saved once something is detected
+  #   infer_every_n: 4         # run the model every Nth saved frame
+  #   cooldown_seconds: 8.0    # quiet time before a recording stops
+  #   max_window_seconds: 120.0 # longest a single recording can run
+  #   conf: 0.25               # detection confidence floor
+  #   preview_fps: 6.0         # how often the Live view's picture refreshes
+  #   preview_width: 1280      # size of the Live view's preview image
+  #   jpeg_quality: 95         # quality of saved frames
 
-    # ---- once a detection opens a window ----------------------------------
-    # How often a frame is SAVED. Dense enough to see a bird move between frames
-    # and to play the window back as a clip.
-    #
-    # This is also the disk bill: every saved frame is a native-resolution JPEG,
-    # which on a 4K camera measures about 1.7 MB. At 4 fps a window costs
-    # roughly 400 MB for every minute it stays open, so raise this only with
-    # somewhere to put the result.
-    save_fps: 4.0
-
-    # Run the model on every Nth saved frame, carrying the last measured boxes
-    # across the frames in between (they are marked `carried` in
-    # detections.jsonl and drawn dimmer, so nothing claims the model saw a
-    # frame it never ran on).
-    #
-    # WHY NOT EVERY FRAME: tiled 4K inference measures ~154ms/frame at FP16,
-    # i.e. about 6.5 frames per second for the ENTIRE GPU -- shared by every
-    # camera. Inferring all 8 saved frames per second, even for one camera,
-    # is not physically possible. Divide the measured ceiling by
-    # (save_fps / infer_every_n) to see how many cameras fit.
-    infer_every_n: 4
-
-    # Quiet time before the window is declared over and saving stops.
-    cooldown_seconds: 8.0
-
-    # Longest a single window may run before it splits into a new one. A busy
-    # scene triggers something every few seconds for hours, and a window that
-    # never closes can never be marked reviewed and never stops writing --
-    # measured at roughly 190 MB per minute on a 4K camera.
-    max_window_seconds: 120.0
-
-    conf: 0.25            # confidence floor passed to the model
-
-    # Tiling geometry. Leave these alone unless the model was retrained.
-    tile: 640
-    overlap: 128
-    nms_iou: 0.5
-
-    # How often the live view's picture refreshes. Kept separate from scan_fps
-    # because decoding and drawing a frame is cheap while running the model is
-    # not -- this is what keeps the live view smooth between inferences.
-    preview_fps: 6.0
-    preview_width: 1280   # longest edge of the JPEG the live viewer streams
-    jpeg_quality: 95      # saved window frames; q95 is ~15x smaller than PNG
-
-# Camera names become directory components (window folders, preview paths, log
-# file names), so keep them to letters, digits, dot, dash and underscore.
+# EDIT THIS. One entry per camera. `name` becomes part of file/folder names,
+# so keep it to letters, digits, dot, dash, underscore.
 cameras:
   - name: corbu-1
     host: 192.0.2.10
 
   # - name: mast2-a
   #   host: 192.168.88.41
+  #   username: other-login      # overrides `defaults:` for this camera only
+  #   password: other-password
   #   live:
-  #     scan_fps: 0.5     # per-camera overrides merge over the defaults above
+  #     scan_fps: 0.5           # overrides `defaults: live:` for this camera only
+
+# Optional, advanced: only used if a site's network link is worth watching
+# separately (e.g. a WireGuard tunnel). Leave unset otherwise -- it has no
+# effect if absent.
+# link_watch_csv: ../link_watch.csv

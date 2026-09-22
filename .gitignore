@@ -6,6 +6,9 @@ config.*.yaml
 # Login credentials (password hashes). Only users.example.yaml is tracked.
 users.yaml
 
+# NAS connection settings. Only nas.example.env is tracked.
+nas.env
+
 # Client app: build output and installed packages, not source.
 client/node_modules/
 client/dist/
