@@ -56,9 +56,11 @@ import yaml
 
 from camera_config import ROTATE_CODES, build_cameras, redact, select_cameras
 from metrics_log import log_metric
-from model_infer import (build_infer, detect_frame, draw_boxes, fit_width,
-                         save_crop, write_jpeg)
-from sitepaths import add_sites_root_argument, site_dir
+from model_infer import (build_infer, build_infer_rfdetr, detect_frame, draw_boxes,
+                         fit_width, save_crop, write_jpeg)
+from layout import SiteLayout
+from sitepaths import add_sites_root_argument, site_dir, site_root
+from tracker import Linker
 
 # Read by OpenCV when it builds each FFmpeg context. UDP RTSP drops packets on
 # any real link and the decoder turns those into smeared, half-updated frames,
@@ -83,17 +85,18 @@ class Window:
     two different birds share a verdict key.
     """
 
-    def __init__(self, root: Path, camera: str, now: datetime):
+    def __init__(self, root: Path, camera: str, now: datetime, layout: SiteLayout | None = None):
         self.camera = camera
         self.day = now.strftime("%Y-%m-%d")
-        self.name = f"{camera}-{now.strftime('%H%M%S')}"
+        base = f"{camera}-{now.strftime('%H%M%S')}"
+        self.name = layout.unique_window(self.day, base) if layout else base   # unique in inbox, frames, trash
         self.dir = root / self.day / self.name
         suffix = 1
         # A restart within the same second (the supervisor relaunching a crashed
         # child, say) must not reopen a folder that already holds frames.
         while self.dir.exists():
             suffix += 1
-            self.name = f"{camera}-{now.strftime('%H%M%S')}-{suffix}"
+            self.name = f"{base}-{suffix}"
             self.dir = root / self.day / self.name
         self.dir.mkdir(parents=True, exist_ok=True)
         self.frames = 0
@@ -129,7 +132,13 @@ def main() -> int:
                     help="camera name or host (default: the config's only camera; "
                          "required if it has more than one)")
     ap.add_argument("--weights", default=None,
-                    help="finetuned YOLO weights (default: the config's model.weights)")
+                    help="finetuned model weights (default: the config's model.weights)")
+    ap.add_argument("--model-type", default=None, choices=["yolo", "rfdetr"],
+                    help="default: the config's model.type, or yolo if unset")
+    ap.add_argument("--rfdetr-variant", default=None,
+                    choices=["nano", "small", "medium", "base", "large"],
+                    help="only for --model-type rfdetr; default: the config's "
+                         "model.variant, or nano if unset")
     ap.add_argument("--fp32", action="store_true",
                     help="disable FP16 inference (slower, ~2x the VRAM, no measured "
                          "accuracy gain -- for a GPU without FP16 support)")
@@ -166,7 +175,10 @@ def main() -> int:
     #   are ever produced, no window ever opens, and nothing is saved -- but
     #   the camera stays watchable, which is the whole point of a live view
     #   at a scale where not every camera can have a model loaded at once.
-    weights = args.weights or (cfg.get("model") or {}).get("weights")
+    model_cfg = cfg.get("model") or {}
+    weights = args.weights or model_cfg.get("weights")
+    model_type = args.model_type or model_cfg.get("type") or "yolo"
+    rfdetr_variant = args.rfdetr_variant or model_cfg.get("variant") or "nano"
     infer_fn = None
     if not weights:
         print("no weights configured -- running video-only, no detection", flush=True)
@@ -175,7 +187,9 @@ def main() -> int:
               file=sys.stderr, flush=True)
         weights = None
 
-    frames_root = args.out or site_dir(cfg, "frames", base=args.sites_root, source=args.config)
+    layout = SiteLayout(site_root(cfg, args.sites_root, args.config))
+    layout.ensure()
+    frames_root = args.out or layout.inbox       # new windows wait in the inbox until reviewed
     detections_root = site_dir(cfg, "dataset", "detections", base=args.sites_root,
                                source=args.config) / args.bucket
     crops_root = detections_root / "crops"
@@ -215,10 +229,14 @@ def main() -> int:
     rotation = ROTATE_CODES.get(camera.rotate)
 
     if weights:
-        print(f"loading {weights}", flush=True)
+        print(f"loading {weights} ({model_type})", flush=True)
         try:
-            infer_fn = build_infer(weights, tile=int(live["tile"]), conf=float(live["conf"]),
-                                   half=not args.fp32)
+            if model_type == "rfdetr":
+                infer_fn = build_infer_rfdetr(weights, variant=rfdetr_variant,
+                                              tile=int(live["tile"]), conf=float(live["conf"]))
+            else:
+                infer_fn = build_infer(weights, tile=int(live["tile"]), conf=float(live["conf"]),
+                                       half=not args.fp32)
         except Exception as exc:
             # A model load can fail for reasons only discoverable by trying
             # (a corrupt checkpoint, a CUDA error, an actual out-of-memory the
@@ -263,7 +281,13 @@ def main() -> int:
 
     manifest = (detections_root / "detections.jsonl").open("a", encoding="utf-8")
     window: Window | None = None
-    next_track = 0
+    track_ids = iter(range(10 ** 9))
+
+    def fresh_track() -> int:
+        return next(track_ids)
+
+    link_px = float(live.get("link_px", 0) or 0)
+    linker = Linker(fresh_track, min_gate_px=link_px) if link_px > 0 else None
     saved_frames = 0
     since_infer = 0
     carried: list[dict] = []
@@ -387,13 +411,19 @@ def main() -> int:
                         boxes = detect_frame(frame, int(live["tile"]), infer_fn,
                                              int(live["overlap"]), float(live["nms_iou"]),
                                              timing=infer_timing)
-                        # A track id is given once, when the model actually
-                        # measures a box. The frames that carry it reuse that
-                        # id, so one bird is one thing to judge rather than one
-                        # per frame it happens to appear on.
-                        for b in boxes:
-                            b["track"] = next_track
-                            next_track += 1
+                        # A track id is given when the model measures a box, and the
+                        # frames that carry it reuse it. With link_px > 0 a box that
+                        # lands where an open track of the SAME window predicts it
+                        # keeps that track's id, so one bird is one track across the
+                        # whole window rather than one per inference. An idle scan
+                        # (no window open) starts from a clean linker.
+                        if linker is not None:
+                            if window is None:
+                                linker = Linker(fresh_track, min_gate_px=link_px)
+                            linker.update(boxes)
+                        else:
+                            for b in boxes:
+                                b["track"] = fresh_track()
                         carried = boxes
                     else:
                         boxes = carried
@@ -414,7 +444,7 @@ def main() -> int:
                     stamp = datetime.now()
                     if boxes and run_model and recording:
                         if window is None:
-                            window = Window(frames_root, camera.name, stamp)
+                            window = Window(frames_root, camera.name, stamp, layout)
                             # 1, not 0: the model has just run on this very
                             # frame, so the next one carries its boxes.
                             since_infer = 1

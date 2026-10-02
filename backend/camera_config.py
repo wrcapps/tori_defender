@@ -51,7 +51,10 @@ DEFAULTS: dict = {
         # ~154ms/frame (FP16) -- about 6.5 fps for the whole GPU -- so inferring
         # every saved frame at save_fps is not physically possible.
         "infer_every_n": 4,
-        # Quiet time before a window is declared over.
+        # Idle frames kept in memory so a window can start BEFORE the detection (at scan_fps apart).
+        # 0 disables. Costs about one decoded frame of RAM per camera per entry (25 MB at 4K).
+        "preroll_frames": 3,
+        # Quiet time before a window is declared over; the frames saved in it are the post-roll.
         "cooldown_seconds": 8.0,
         # Longest a single window may run before it is split into a new one. A
         # busy scene triggers something every few seconds for hours on end, and
@@ -66,16 +69,42 @@ DEFAULTS: dict = {
         "tile": 640,
         "overlap": 128,
         "nms_iou": 0.5,
+        # Link detections across the inferences of one window: a box within this many
+        # pixels of where an open track predicts it (or within 6 box diagonals, if
+        # larger) keeps that track's id. 0 gives every measured box its own id.
+        "link_px": 300.0,
+        # Where a camera's frames come from. "auto": the live RTSP stream, and if it cannot be
+        # held (no connection for live_giveup_s, or degrade_misses rounds in a row it could not
+        # deliver a frame) the NVR's recording, pulled in segment_seconds pieces in the
+        # background -- needs a top-level `nvr:` block. "live" / "segments" force one. Live is
+        # tried again every live_retry_s. With no data at all a camera is shown black.
+        "source": "auto",
+        "live_giveup_s": 30.0,
+        "live_retry_s": 300.0,
+        "degrade_misses": 3,
+        "segment_seconds": 16.0,
+        "max_backlog_s": 60.0,
+        "stale_s": 180.0,
         # The live view's own refresh rate, deliberately separate from how often
         # the model runs: a frame is cheap to decode and draw, an inference is
         # not, so the view can stay smooth at several frames a second while the
         # model still only runs once a second.
-        "preview_fps": 6.0,
+        "preview_fps": 2.0,
+        # What a camera NOBODY is watching refreshes at (its latest.jpg still feeds tiles and
+        # thumbnails). A 25 fps stream is never shown at 25 fps: the live view is a sparse,
+        # recent still, not video, and every frame shown costs a 1280px JPEG encode.
+        "idle_preview_fps": 0.2,
         # Longest edge of the preview JPEG the live viewer streams.
         "preview_width": 1280,
         # JPEG quality for saved window frames. q95 is visually lossless and
         # ~15x smaller than the equivalent native PNG.
         "jpeg_quality": 95,
+        # Where the live stream is decoded. "auto": on the GPU's NVDEC engine when
+        # PyNvVideoCodec and CUDA are usable (frames then stay on the GPU all the way to the
+        # detector), else on the CPU. "nvdec" / "cpu" force one. Twelve 25 fps 4K HEVC streams
+        # are 300 fps of decode: ~0.15 CPU cores on NVDEC, ~14 cores (and still only 0.34x real
+        # time) on the CPU -- see docs/PERFORMANCE_12CAM.md.
+        "decoder": "auto",
     },
 }
 

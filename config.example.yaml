@@ -63,3 +63,25 @@ cameras:
 # separately (e.g. a WireGuard tunnel). Leave unset otherwise -- it has no
 # effect if absent.
 # link_watch_csv: ../link_watch.csv
+
+# Impact risk from distance (Review's alerts). Delete or leave commented until the
+# zones are agreed: without this block the app uses placeholder 100 m / 250 m and
+# marks every risk it shows as "placeholder zones".
+# risk:
+#   turbine: "Turbine 1"      # name used in alert text
+#   high_below_m: 100         # closer than this        -> High   (turbine stopped)
+#   medium_below_m: 250       # closer than this        -> Medium (deterrent activated)
+#                             # further                 -> Low    (no action)
+
+# Acquisition (the header switch) is remembered across restarts. It switches itself off when no page has been
+# open for this long, so closing the browser does not leave the GPU and the cameras busy for days. 0 = never.
+# Cameras with their own Record flag keep running.
+acquisition:
+  idle_stop_minutes: 10
+
+# How long detections wait for review, and how long a rejected one can still be restored.
+# See docs/DATA_LAYOUT.md. A window nobody looked at after `inbox_days` moves to trash/ (it is not
+# deleted); trash is emptied `trash_days` after the move. Windows with your verdicts or drawn boxes never expire.
+retention:
+  inbox_days: 3
+  trash_days: 7

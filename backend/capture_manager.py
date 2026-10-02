@@ -1,42 +1,35 @@
 #!/usr/bin/env python3
-"""Starting a camera's capture process the moment someone actually needs it,
-and stopping it again once nobody does.
+"""Owns the ONE acquisition process (acquisition_service.py) and tells it what to do.
 
-WHY ON DEMAND, NOT "RUN EVERYTHING THE CONFIG LISTS":
-    A site's config can list far more cameras than one GPU or one link can run
-    at once (Babadag's 12, against a ~6.5 tiled-inference/s budget). Starting
-    all of them because they're merely configured wastes exactly the resources
-    the rest of this app is careful about. Starting one the moment a person
-    picks it in Live -- and only that one -- means the fleet in use is always
-    the fleet someone is actually looking at or has asked to record.
+WHAT CHANGED FROM "A PROCESS PER CAMERA"
+    This used to start a live_capture.py per camera on demand: a model and a CUDA context per
+    camera (~1.4 GB of VRAM each, so twelve cameras were ~17 GB and never fit a 12 GB card),
+    all fighting over one GPU with no coordination. There is now a single service that loads
+    the model once and runs the cameras in synchronised rounds (see acquisition_service.py).
+    This class keeps the interface the rest of app.py already uses -- acquire/release for
+    viewers, note_recording, status(camera) -- and adds the one new thing, `set_enabled`.
 
-WHAT COUNTS AS "NEEDED":
-    A camera's process runs for as long as EITHER is true:
-      - at least one MJPEG viewer is connected to its stream (tracked by
-        _stream()'s own connect/disconnect, not by a separate button -- the
-        open HTTP connection already IS the signal), or
-      - recording is switched on for it.
-    Losing the last viewer, or recording being switched off with nobody
-    watching, stops the process immediately -- no grace period. An earlier
-    version of this waited ~20s before stopping, specifically so a page
-    reload or a flaky reconnect wouldn't pay a freshly loaded model's startup
-    cost again for nothing. That grace period turned out to have a real cost
-    of its own: several stale-but-still-running viewers left open (e.g. from
-    Matrix's "watch all") hold GPU/VRAM the budget check (capacity.py) counts
-    against every *new* camera someone tries to open next, which read as the
-    whole app stalling. Stopping instantly was chosen over that -- a real
-    page reload now does pay the reload cost again, a tradeoff accepted on
-    purpose rather than discovered as a regression.
+THREE INDEPENDENT REASONS A CAMERA IS PROCESSED (any one is enough)
+    - acquisition is ENABLED (the header button): every camera, with detection and
+      notifications -- but nothing is written to disk unless that camera is also recording;
+    - the camera's RECORDING flag file exists (the per-camera Record button, unchanged): it is
+      captured and saved even if acquisition is off;
+    - someone is VIEWING it (an open MJPEG stream): it is processed so the view has boxes.
+    Enabling acquisition never touches a recording flag, and recording never needs acquisition.
 
-WHY A SOFT CAPACITY WARNING HERE, NOT A HARD REFUSAL:
-    live_capture_all.py refuses outright, because it is handed a whole fleet in
-    one shot and a silent partial start would be confusing. Here a person just
-    clicked one specific camera; refusing that click with no way through is
-    worse than starting it anyway and saying, honestly, that it and its
-    neighbours may now be oversubscribed.
+HOW THE APP AND THE SERVICE TALK
+    Files in <logs>/acquisition/:  control.json (app -> service: enabled, viewed cameras) and
+    status.json (service -> app, ~1/s). A control write is atomic and the service polls its
+    mtime, so there is no socket, no port, and nothing to keep in sync after a crash.
+    `enabled` is persisted in control.json, so it survives an app restart.
+
+THE SERVICE RUNS ONLY WHILE SOMETHING WANTS IT
+    No enabled flag, no viewers and no recording flag -> the process is stopped and its VRAM
+    is returned. It is restarted with backoff if it dies while wanted.
 """
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -46,364 +39,351 @@ import time
 from datetime import date
 from pathlib import Path
 
-from capacity import budget_warning, gpu_free_mib, total_demand, vram_refusal
-from metrics_log import log_metric
-
 HERE = Path(__file__).resolve().parent
 
 RESTART_BACKOFF_SECONDS = 5.0
 RESTART_BACKOFF_MAX = 120.0
-# How often the reaper's own periodic capacity snapshot is logged -- ticking
-# every 2s (the reaper's own loop interval) would be far more resolution than
-# this budget number needs, per PERFORMANCE.md's structured-output requirement.
-CAPACITY_SNAPSHOT_SECONDS = 60.0
-
-
-class ManagedCamera:
-    """One camera's on-demand process, and why it is or isn't running."""
-
-    def __init__(self, name: str, camera, argv: list[str], log_path: Path,
-                 camera_live_dir: Path):
-        self.name = name
-        self.camera = camera
-        self.argv = argv
-        self.log_path = log_path
-        self.camera_live_dir = camera_live_dir
-        self.lock = threading.Lock()
-        self.process: subprocess.Popen | None = None
-        self.viewers = 0
-        self.recording = False
-        self.backoff = RESTART_BACKOFF_SECONDS
-        self.started_at = 0.0
-        self.last_exit: tuple[int, str] | None = None   # (code, reason) for the UI
-        self.budget_warning: str | None = None
-        self.restart_at: float | None = None   # monotonic time a pending restart fires
-        # Detection is a capability of a *running* process, not a precondition
-        # for starting one -- see _ensure_started. weights/no_weights_reason
-        # describe the site's configuration (fixed); detecting/detection_note
-        # describe what the *current* process actually loaded (can differ
-        # run to run, e.g. VRAM was tight at the moment this one started).
-        self.weights: str | None = None
-        self.no_weights_reason: str | None = None
-        self.detecting = False
-        self.detection_note: str | None = None
-
-    def wanted(self) -> bool:
-        return self.viewers > 0 or self.recording
-
-    def running(self) -> bool:
-        return self.process is not None and self.process.poll() is None
+STARTING_SECONDS = 25.0
+# Above this much of the GPU's time spent just scanning, warn: the rounds will start to run late.
+GPU_DUTY_WARN = 0.8
 
 
 class CaptureManager:
-    """Every camera this app knows how to start, across every configured site.
-
-    One instance, shared by every request handler -- a lock around each
-    camera's own state is what keeps a viewer connecting on one thread and a
-    recording toggle arriving on another from racing each other into starting
-    the same process twice or stopping one the other still needs.
-    """
-
-    def __init__(self, logs_dir: Path, gpu_fps: float, weights_by_site: dict[str, str | None]):
+    def __init__(self, logs_dir: Path, gpu_fps: float, weights_by_site: dict[str, str | None],
+                 idle_stop_s: float = 600.0):
         self.logs_dir = logs_dir
+        # The Acquisition switch is remembered across restarts, so without this a service started "for a
+        # while" kept running for days with nobody looking. 0 disables the auto-stop.
+        self.idle_stop_s = idle_stop_s
+        self.last_seen = time.monotonic()
+        self.auto_stopped_at: float | None = None
         self.gpu_fps = gpu_fps
         self.weights_by_site = weights_by_site
-        self.cameras: dict[str, ManagedCamera] = {}
-        self._reaper_stop = threading.Event()
+        # What Settings chose, if anything: {weights, type, variant} wins over config.yaml and
+        # --weights (a person picked it); device is "auto" | "cpu" | "cuda" (acquisition_service --device).
+        self.model_choice: dict | None = None
+        self.device = "auto"
+        self.dir = logs_dir / "acquisition"
+        self.control_path = self.dir / "control.json"
+        self.status_path = self.dir / "status.json"
+        self.lock = threading.RLock()
+        self.sites: dict[str, object] = {}
+        self.cameras: dict[str, tuple[object, object]] = {}     # camera name -> (Camera, Site)
+        self.viewers: dict[str, int] = {}
+        self.enabled = False
+        self.process: subprocess.Popen | None = None
+        self.started_at = 0.0
+        self.last_exit: tuple[int, str] | None = None
+        self.backoff = RESTART_BACKOFF_SECONDS
+        self.restart_at: float | None = None
+        self._stop = threading.Event()
         self._reaper = threading.Thread(target=self._reap_loop, daemon=True)
-        # Process-global, not per-camera or per-site: one GPU, one shared
-        # budget (capacity.py's own docstring), so this belongs next to the
-        # server's own log rather than under any one site's dataset/ tree.
-        self._capacity_log_path = self.logs_dir / "capacity.jsonl"
-        self._next_capacity_snapshot = 0.0
+        self._written: dict | None = None
 
+    # ------------------------------------------------------------ registration
     def register(self, site, camera) -> None:
-        """Called once at startup per camera -- builds the command line but
-        starts nothing yet.
+        self.sites[site.name] = site
+        self.cameras[camera.name] = (camera, site)
 
-        --weights is deliberately NOT baked in here: whether this camera's
-        process gets one is decided fresh at every start, in _ensure_started,
-        because free VRAM changes as other cameras start and stop. A camera
-        this manager registered at startup with plenty of headroom must not
-        be stuck starting without detection forever just because some other
-        camera's process happened to load its model first.
-        """
-        weights = self.weights_by_site.get(site.name)
-        argv = [sys.executable, str(HERE / "live_capture.py"),
-                "--config", str(site.config_path), "--camera", camera.name,
-                "--bucket", site.model_bucket]
-        if site.sites_root:
-            argv += ["--sites-root", str(site.sites_root)]
-        log_path = self.logs_dir / f"{site.name}-{camera.safe_name}-live-{date.today().isoformat()}.out"
-        managed = ManagedCamera(camera.name, camera, argv, log_path, site.live_root / camera.name)
-        managed.weights = weights
-        if not weights:
-            managed.no_weights_reason = (
-                f"no weights configured for site {site.name!r} -- pass --weights to "
-                f"app.py or set model.weights in {site.config_path} to enable detection "
-                f"on this camera. The live video itself still works.")
-        self.cameras[camera.name] = managed
+    # ---------------------------------------------------------------- commands
+    def _argv(self) -> list[str]:
+        sites = list(self.sites.values())
+        # Frozen by PyInstaller there is no interpreter to hand a script to: the launcher
+        # exe itself runs the service when asked with --service (desktop/launcher.py).
+        if getattr(sys, "frozen", False):
+            argv = [sys.executable, "--service"]
+        else:
+            argv = [sys.executable, str(HERE / "acquisition_service.py")]
+        for site in sites:
+            argv += ["--config", str(site.config_path)]
+        argv += ["--stop-on-stdin-eof",
+                 "--bucket", sites[0].model_bucket,
+                 "--control", str(self.control_path), "--status", str(self.status_path)]
+        if sites[0].sites_root:
+            argv += ["--sites-root", str(sites[0].sites_root)]
+        weights = next((w for w in self.weights_by_site.values() if w), None)
+        if self.model_choice:
+            argv += ["--weights", self.model_choice["weights"], "--model-type", self.model_choice["type"]]
+            if self.model_choice.get("variant"):
+                argv += ["--rfdetr-variant", self.model_choice["variant"]]
+        elif weights:
+            argv += ["--weights", weights]
+        argv += ["--device", self.device]
+        return argv
+
+    def _pattern(self) -> str:
+        return f"(acquisition_service.py|--service).*--control {self.control_path}"
 
     def reap_orphans(self) -> None:
-        """Kill any live_capture.py already running for a camera this manager
-        is about to own.
-
-        This app is meant to be the only thing that starts these processes, so
-        the only way one can already be running at startup is a previous
-        instance of this app that did not shut down cleanly (SIGKILL, a crash,
-        the machine coming back after a power loss) -- orphaned, still holding
-        an RTSP connection and GPU memory open, with nothing left able to ask
-        it to stop. Matched on the exact --config/--camera pair, so this can
-        never touch a process for a camera some other tool started.
-        """
-        for managed in self.cameras.values():
+        """A service left running by an app that died without cleaning up would hold the GPU
+        and every camera connection with nothing able to stop it; matched on this app's own
+        control path, so it can never touch another instance's."""
+        try:
+            found = subprocess.run(["pgrep", "-f", self._pattern()], capture_output=True,
+                                   text=True, timeout=5)
+            pids = [int(p) for p in found.stdout.split() if int(p) != os.getpid()]
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            return
+        for pid in pids:
+            print(f"found an orphaned acquisition service (pid {pid}); stopping it", flush=True)
             try:
-                config_arg = managed.argv[managed.argv.index("--config") + 1]
-                pattern = f"live_capture.py.*--config {config_arg}.*--camera {managed.name}(\\s|$)"
-                found = subprocess.run(["pgrep", "-f", pattern],
-                                       capture_output=True, text=True, timeout=5)
-                pids = [int(p) for p in found.stdout.split()]
-            except (ValueError, OSError, subprocess.TimeoutExpired):
-                continue
-            for pid in pids:
-                print(f"[{managed.name}] found an orphaned process from a previous "
-                      f"run (pid {pid}); stopping it", flush=True)
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    continue
-            # The orphan's own latest.jpg/status.json are now stale, and would
-            # otherwise sit there describing a connection that no longer
-            # exists until the next process overwrites them -- briefly telling
-            # a viewer "stable" or "live" from files a dead process left
-            # behind, right as a fresh one is starting from zero.
-            if pids:
-                for name in ("latest.jpg", "status.json"):
-                    (managed.camera_live_dir / name).unlink(missing_ok=True)
-            if pids:
-                time.sleep(1.0)
-                for pid in pids:
-                    try:
-                        os.kill(pid, 0)   # still alive? (raises if not -- see below)
-                    except ProcessLookupError:
-                        continue          # already gone: SIGTERM was enough
-                    # Still around a second after SIGTERM: force it. Checking
-                    # first, rather than sending SIGKILL unconditionally,
-                    # avoids the (rare but real) risk of the PID having been
-                    # reused by an unrelated process in that one second.
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        if pids:
+            time.sleep(1.5)
 
     def start(self) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
         self.reap_orphans()
+        try:
+            self.enabled = bool(json.loads(self.control_path.read_text(encoding="utf-8")).get("enabled"))
+        except (OSError, json.JSONDecodeError):
+            self.enabled = False
+        with self.lock:
+            self._sync()
         self._reaper.start()
 
     def shutdown(self) -> None:
-        self._reaper_stop.set()
-        for managed in self.cameras.values():
-            self._stop_process(managed)
+        self._stop.set()
+        with self.lock:
+            self._stop_process()
 
-    # ------------------------------------------------------------ viewers
+    # ------------------------------------------------------------- desired state
+    def _recording_cameras(self) -> list[str]:
+        return [n for n, (_, site) in self.cameras.items() if site.is_recording(n)]
+
+    def _wanted(self) -> bool:
+        return (self.enabled or any(v > 0 for v in self.viewers.values())
+                or bool(self._recording_cameras()))
+
+    def _write_control(self) -> None:
+        payload = {"enabled": self.enabled,
+                   "viewed": sorted(n for n, v in self.viewers.items() if v > 0)}
+        if payload == self._written:
+            return
+        self._written = payload
+        tmp = self.control_path.with_name(f".{self.control_path.name}.tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(self.control_path)
+
+    def _sync(self, from_reaper: bool = False) -> str | None:
+        """Make the process match what is wanted. Caller holds the lock.
+
+        The reaper's periodic call must not start a service that is sitting out a crash
+        backoff; a person's click (enable, open a stream, record) may -- it asked for it.
+        """
+        self._write_control()
+        if self._wanted():
+            if from_reaper and self.restart_at is not None:
+                return None
+            return self._ensure_started()
+        self._stop_process()
+        self.restart_at = None
+        return None
+
+    def touch(self) -> None:
+        """A signed-in page made a request: somebody is still here."""
+        self.last_seen = time.monotonic()
+
+    def _stop_if_abandoned(self, now: float) -> bool:
+        """Switch Acquisition off when no page has been open for idle_stop_s. Caller holds the lock.
+        Cameras with their own Record flag and open streams are separate, explicit reasons to run."""
+        if not (self.enabled and self.idle_stop_s > 0 and now - self.last_seen > self.idle_stop_s):
+            return False
+        self.enabled = False
+        self.auto_stopped_at = time.time()
+        print(f"acquisition switched off: no page open for {self.idle_stop_s / 60:g} min", flush=True)
+        self._sync()
+        return True
+
+    def set_enabled(self, enabled: bool) -> str | None:
+        with self.lock:
+            self.last_seen = time.monotonic()
+            if enabled:
+                self.auto_stopped_at = None
+            self.enabled = enabled
+            return self._sync()
+
+    def reconfigure(self, model_choice: dict | None, device: str) -> str | None:
+        """Switch model and/or device. The service loads both once at start, so a running one is
+        stopped (it closes its open windows first) and started again with the new flags -- only if
+        something still wants it; otherwise the next start picks them up. Returns an error or None."""
+        with self.lock:
+            if model_choice == self.model_choice and device == self.device:
+                return None
+            self.model_choice, self.device = model_choice, device
+            was_running = self.running()
+            self._stop_process()
+            self.restart_at = None
+            self.backoff = RESTART_BACKOFF_SECONDS
+            self.last_exit = None
+            return self._sync() if was_running else None
+
     def acquire(self, name: str) -> str | None:
-        """A viewer connected. Starts the process if this is the first one.
-        Returns an error string if it could not be started, else None."""
-        managed = self.cameras.get(name)
-        if managed is None:
+        if name not in self.cameras:
             return "unknown camera"
-        with managed.lock:
-            managed.viewers += 1
-            return self._ensure_started(managed)
+        with self.lock:
+            self.viewers[name] = self.viewers.get(name, 0) + 1
+            return self._sync()
 
     def release(self, name: str) -> None:
-        """A viewer disconnected. Stops the process right away if nobody
-        else needs it -- see the module docstring for why this is instant,
-        not grace-period-delayed, as of this project's own explicit request."""
-        managed = self.cameras.get(name)
-        if managed is None:
-            return
-        with managed.lock:
-            managed.viewers = max(0, managed.viewers - 1)
-            should_stop = not managed.wanted()
-        if should_stop:
-            self._stop_process(managed)
+        with self.lock:
+            self.viewers[name] = max(0, self.viewers.get(name, 0) - 1)
+            self._sync()
 
-    # ----------------------------------------------------------- recording
     def note_recording(self, name: str, enabled: bool) -> str | None:
-        """The site's flag file is already written by the caller; this only
-        starts or stops the process to match."""
-        managed = self.cameras.get(name)
-        if managed is None:
+        """The flag file is already written by the caller; start or stop the service to match."""
+        if name not in self.cameras:
             return "unknown camera"
-        with managed.lock:
-            managed.recording = enabled
-            if enabled:
-                return self._ensure_started(managed)
-            should_stop = not managed.wanted()
-        if should_stop:
-            self._stop_process(managed)
-        return None
+        with self.lock:
+            return self._sync()
 
-    # ------------------------------------------------------------- status
-    def status(self, name: str) -> dict:
-        managed = self.cameras.get(name)
-        if managed is None:
-            return {"running": False, "starting": False, "error": "unknown camera",
-                    "detecting": False, "detection_note": None}
-        with managed.lock:
-            running = managed.running()
-            starting = running and (time.monotonic() - managed.started_at) < 20.0
-            # A dead process (last_exit) is a real failure -- the video itself
-            # is down, not just detection on top of it. Missing/refused
-            # detection while the video runs fine is a separate, softer fact,
-            # reported as detection_note, never folded into `error`: a client
-            # or an operator scanning for broken cameras must not have to
-            # tell "this feed is down" and "this feed has no detector right
-            # now" apart by reading a sentence.
-            error = managed.last_exit[1] if managed.last_exit else None
-            return {"running": running, "starting": starting, "error": error,
-                    "warning": managed.budget_warning if running else None,
-                    "detecting": managed.detecting if running else False,
-                    "detection_note": managed.detection_note if running else None}
+    # --------------------------------------------------------------- the process
+    def running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
 
-    # -------------------------------------------------------- process control
-    def _ensure_started(self, managed: ManagedCamera) -> str | None:
-        """Caller holds managed.lock.
-
-        Starting the process is never refused: video (decode + live preview)
-        needs no GPU model at all, so there is no resource for "not enough
-        of it" to mean here -- see WHY VIDEO IS ALWAYS AVAILABLE in
-        live_capture.py. Detection is a separate, optional capability of the
-        process this call is about to start, decided fresh every time: if
-        this site has no weights configured, or the GPU genuinely does not
-        have room for one more model right now, the process starts anyway,
-        without --weights, and live_capture.py runs in video-only mode --
-        decoding and writing the live preview, inferring nothing, saving
-        nothing (there is no detection to trigger a window). The camera
-        stays visible and watchable either way; only detection is gated.
-        """
-        if managed.running():
+    def _ensure_started(self) -> str | None:
+        if self.running():
             return None
-
-        detecting = bool(managed.weights)
-        free_mib = gpu_free_mib()
-        if detecting:
-            refusal = vram_refusal()
-            if refusal:
-                detecting = False
-                managed.detection_note = refusal
-            else:
-                managed.detection_note = None
-        else:
-            managed.detection_note = managed.no_weights_reason
-
-        argv = list(managed.argv)
-        if detecting:
-            argv += ["--weights", managed.weights]
-
-        # The FPS budget is about inference throughput -- a video-only
-        # process asks the GPU for nothing, so it has no place in this sum;
-        # counting it would make every other camera look more oversubscribed
-        # than the GPU actually is.
-        detecting_cameras = [m.camera for m in self.cameras.values()
-                             if m.name != managed.name and m.running() and m.detecting]
-        if detecting:
-            detecting_cameras.append(managed.camera)
-        idle_demand, peak_demand = total_demand(detecting_cameras) if detecting_cameras else (0.0, 0.0)
-        warning = budget_warning(detecting_cameras, self.gpu_fps) if detecting_cameras else None
-        if warning:
-            print(f"[{managed.name}] starting anyway, but: {warning}", file=sys.stderr, flush=True)
-        managed.budget_warning = warning
-        # Phase 0 instrumentation: this is the one moment `capacity.py`'s
-        # math and the VRAM-refusal reason were previously only ever a
-        # console print -- surface both as structured data too
-        # (PERFORMANCE.md §4: "already computed, not yet surfaced to the UI").
-        log_metric(self._capacity_log_path, "capacity_check",
-                  camera=managed.name, detecting=detecting,
-                  idle_demand=round(idle_demand, 2), peak_demand=round(peak_demand, 2),
-                  gpu_fps=self.gpu_fps, warning=warning,
-                  vram_free_mib=free_mib, vram_refusal=managed.detection_note if not detecting else None)
-
-        managed.log_path.parent.mkdir(parents=True, exist_ok=True)
-        managed.process = subprocess.Popen(argv, stdout=subprocess.PIPE,
-                                          stderr=subprocess.STDOUT, text=True,
-                                          bufsize=1, errors="replace")
-        managed.detecting = detecting
-        managed.started_at = time.monotonic()
-        managed.backoff = RESTART_BACKOFF_SECONDS
-        managed.last_exit = None
-        threading.Thread(target=self._pump_log, args=(managed,), daemon=True).start()
-        print(f"[{managed.name}] started (pid {managed.process.pid}, "
-              f"{'detecting' if detecting else 'video only: ' + (managed.detection_note or '')})"
-              f" -> {managed.log_path}", flush=True)
+        if not self.sites:
+            return "no site registered"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        log_path = self.dir / f"service-{date.today().isoformat()}.out"
+        try:
+            self.status_path.unlink()
+        except OSError:
+            pass
+        # stdin is the stop channel: closing it asks the service to finish cleanly (and its
+        # death closes it for the service, so an orphan can never outlive this app) --
+        # there is no SIGTERM that closes a window gracefully on Windows.
+        extra = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+        self.process = subprocess.Popen(self._argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                        errors="replace", **extra)
+        self.started_at = time.monotonic()
+        self.last_exit = None
+        self.restart_at = None
+        threading.Thread(target=self._pump_log, args=(self.process, log_path), daemon=True).start()
+        print(f"acquisition service started (pid {self.process.pid}) -> {log_path}", flush=True)
         return None
 
-    def _pump_log(self, managed: ManagedCamera) -> None:
+    @staticmethod
+    def _pump_log(process, log_path: Path) -> None:
         from camera_config import redact_text
-        process = managed.process
-        with managed.log_path.open("a", encoding="utf-8") as log:
+        with log_path.open("a", encoding="utf-8") as log:
             for line in process.stdout:
                 log.write(redact_text(line))
                 log.flush()
 
-    def _stop_process(self, managed: ManagedCamera) -> None:
-        with managed.lock:
-            process = managed.process
-            managed.process = None
+    def _stop_process(self) -> None:
+        process, self.process = self.process, None
         if process is None or process.poll() is not None:
             return
+        try:
+            process.stdin.close()          # --stop-on-stdin-eof: the service closes any open window
+            process.wait(timeout=15)
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
         process.terminate()
         try:
-            process.wait(timeout=10)
+            process.wait(timeout=15)
         except subprocess.TimeoutExpired:
             process.kill()
 
-    # ------------------------------------------------------------ reaper
     def _reap_loop(self) -> None:
-        """One background thread covering every camera: fires scheduled stops
-        and pending restarts. Never sleeps out a backoff itself -- one
-        camera's crash-restart delay must not stall the stop/restart check for
-        every other camera sharing this single thread; the wait is a
-        timestamp another tick polls, not a blocking call."""
-        while not self._reaper_stop.wait(2.0):
-            now = time.monotonic()
+        while not self._stop.wait(2.0):
+            with self.lock:
+                now = time.monotonic()
+                if self.process is not None and self.process.poll() is not None:
+                    code = self.process.returncode
+                    ran = now - self.started_at
+                    self.process = None
+                    self.last_exit = (code, f"acquisition service exited with {code} after {ran:.0f}s")
+                    if self._wanted():
+                        wait = self.backoff if ran < 60 else RESTART_BACKOFF_SECONDS
+                        self.backoff = (min(self.backoff * 2, RESTART_BACKOFF_MAX)
+                                        if ran < 60 else RESTART_BACKOFF_SECONDS)
+                        self.restart_at = now + wait
+                        print(f"{self.last_exit[1]}; restarting in {wait:.0f}s", flush=True)
+                elif self.restart_at is not None and now >= self.restart_at:
+                    self.restart_at = None
+                    if self._wanted():
+                        self._ensure_started()
+                self._stop_if_abandoned(now)
+                # recording flags are files: a flag set or cleared outside this app (touch, rm)
+                # must still start or stop the service
+                self._sync(from_reaper=True)
 
-            if now >= self._next_capacity_snapshot:
-                self._next_capacity_snapshot = now + CAPACITY_SNAPSHOT_SECONDS
-                running_detecting = [m.camera for m in self.cameras.values()
-                                     if m.running() and m.detecting]
-                idle_demand, peak_demand = (total_demand(running_detecting)
-                                            if running_detecting else (0.0, 0.0))
-                log_metric(self._capacity_log_path, "capacity_snapshot", print_line=False,
-                          running_cameras=len(running_detecting),
-                          idle_demand=round(idle_demand, 2), peak_demand=round(peak_demand, 2),
-                          gpu_fps=self.gpu_fps, vram_free_mib=gpu_free_mib())
+    # -------------------------------------------------------------------- status
+    def _read_status(self) -> dict | None:
+        try:
+            data = json.loads(self.status_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return data if time.time() - data.get("updated", 0) < 10 else None   # stale = not running
 
-            for managed in list(self.cameras.values()):
-                with managed.lock:
-                    process = managed.process
-                    crashed = process is not None and process.poll() is not None
-                    restart_due = managed.restart_at is not None and now >= managed.restart_at
+    def acquisition_status(self) -> dict:
+        """Everything the header button and its popover show."""
+        with self.lock:
+            running = self.running()
+            st = self._read_status() if running else None
+            young = time.monotonic() - self.started_at < STARTING_SECONDS
+            starting = running and (st is None or (young and not st.get("cameras_active")))
+            out = {"enabled": self.enabled, "running": running, "starting": bool(starting),
+                   "error": self.last_exit[1] if self.last_exit and not running else None,
+                   "idle_stop_minutes": self.idle_stop_s / 60,
+                   "auto_stopped_at": self.auto_stopped_at,
+                   "cameras_configured": len(self.cameras),
+                   "recording": self._recording_cameras()}
+        if st:
+            out.update({k: st.get(k) for k in (
+                "cameras_active", "detecting", "detection_note", "model", "rounds", "round_ms",
+                "infer_ms", "capture_skew_ms", "frame_age_ms", "frames_per_round",
+                "cameras_per_round", "max_tiles_per_forward", "vram", "est_mbit_s", "oom_events",
+                "sources", "segment_hub")})
+            out["warning"] = self._warning(st)
+        return out
 
-                if crashed:
-                    code = process.returncode
-                    with managed.lock:
-                        ran_for = now - managed.started_at
-                        managed.process = None
-                        managed.last_exit = (code, f"exited with {code} after {ran_for:.0f}s")
-                        still_wanted = managed.wanted()
-                        if still_wanted:
-                            wait = managed.backoff if ran_for < 60 else RESTART_BACKOFF_SECONDS
-                            managed.backoff = min(managed.backoff * 2, RESTART_BACKOFF_MAX) \
-                                if ran_for < 60 else RESTART_BACKOFF_SECONDS
-                            managed.restart_at = now + wait
-                    if still_wanted:
-                        print(f"[{managed.name}] exited with {code} after {ran_for:.0f}s; "
-                              f"restarting in {wait:.0f}s", flush=True)
+    def _warning(self, st: dict) -> str | None:
+        active = st.get("cameras_active") or 0
+        per_frame = (st.get("infer_ms") or {}).get("p50")
+        frames = st.get("frames_per_round") or 0
+        if not (active and per_frame and frames):
+            return None
+        scan = next(iter(self.cameras.values()))[0].live["scan_fps"]
+        duty = active * float(scan) * (per_frame / frames) / 1000.0
+        if duty > GPU_DUTY_WARN:
+            return (f"{active} cameras scanning at {float(scan):g}/s need {duty:.0%} of the GPU "
+                    f"for detection alone; rounds will start to run late")
+        return None
 
-                elif restart_due:
-                    with managed.lock:
-                        managed.restart_at = None
-                        if managed.wanted():
-                            self._ensure_started(managed)
+    def status(self, name: str) -> dict:
+        """The per-camera fields /api/cameras reports (same shape as before)."""
+        if name not in self.cameras:
+            return {"running": False, "starting": False, "error": "unknown camera",
+                    "detecting": False, "detection_note": None}
+        with self.lock:
+            running = self.running()
+            st = self._read_status() if running else None
+            error = self.last_exit[1] if self.last_exit and not running else None
+        cam = (st or {}).get("cameras", {}).get(name)
+        if cam is None:
+            return {"running": False, "starting": running and st is None, "error": error,
+                    "warning": None, "detecting": False, "detection_note": None}
+        cam_error = cam.get("error") if cam["state"] not in ("live", "segments") else None
+        source = cam.get("source")
+        if source == "segments":
+            lag = cam.get("lag_s")
+            note = ("live is not holding: showing the NVR's recording"
+                    + (f", {lag:.0f}s behind" if lag is not None else ""))
+        elif source == "none":
+            note = "no data (black): live is down and no NVR segment has arrived"
+        else:
+            note = None
+        return {"running": True, "starting": cam["state"] == "connecting",
+                "error": error or cam_error, "source": source, "lag_s": cam.get("lag_s"),
+                "warning": note or self._warning(st),
+                "detecting": bool(st.get("detecting")),
+                "detection_note": st.get("detection_note")}

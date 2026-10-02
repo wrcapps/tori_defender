@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Run live_capture.py for every camera in the config, one process each, and
+"""SUPERSEDED by acquisition_service.py (one process, one model, synchronised rounds).
+Kept for running a fleet the old way: live_capture.py for every camera, one process each, and
 keep them running.
 
 WHY ONE PROCESS PER CAMERA:
@@ -146,6 +147,11 @@ def main() -> int:
     ap.add_argument("--cameras", default=None,
                     help="comma-separated names to run (default: every camera in the config)")
     ap.add_argument("--weights", default=None, help="passed through to each capture process")
+    ap.add_argument("--model-type", default=None, choices=["yolo", "rfdetr"],
+                    help="passed through to each capture process")
+    ap.add_argument("--rfdetr-variant", default=None,
+                    choices=["nano", "small", "medium", "base", "large"],
+                    help="passed through to each capture process")
     ap.add_argument("--bucket", default="live", help="passed through to each capture process")
     ap.add_argument("--sites-root", type=Path, default=None,
                     help="passed through to each capture process")
@@ -173,6 +179,10 @@ def main() -> int:
     shared = ["--config", str(args.config), "--bucket", args.bucket]
     if args.weights:
         shared += ["--weights", args.weights]
+    if args.model_type:
+        shared += ["--model-type", args.model_type]
+    if args.rfdetr_variant:
+        shared += ["--rfdetr-variant", args.rfdetr_variant]
     if args.sites_root:
         shared += ["--sites-root", str(args.sites_root)]
     if args.fp32:

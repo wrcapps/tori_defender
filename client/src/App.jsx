@@ -13,6 +13,8 @@ import Review from "./pages/Review/Review.jsx";
 import Dataset from "./pages/Dataset.jsx";
 import TrackView from "./pages/TrackView.jsx";
 import Inbox from "./pages/Inbox.jsx";
+import Settings from "./pages/Settings.jsx";
+import Setup from "./pages/Setup.jsx";
 
 function RequireAuth({ children }) {
   const { status } = useAuth();
@@ -73,6 +75,8 @@ export default function App() {
           <Route path="inbox" element={<RequireOperator><Inbox /></RequireOperator>} />
           <Route path="review" element={<RequireOperator><Review /></RequireOperator>} />
           <Route path="dataset" element={<RequireOperator><Dataset /></RequireOperator>} />
+          <Route path="settings" element={<RequireOperator><Settings /></RequireOperator>} />
+          <Route path="setup" element={<RequireOperator><Setup /></RequireOperator>} />
           <Route path="*" element={<Navigate to="live" replace />} />
         </Route>
         <Route path="*" element={<Navigate to="/app/live" replace />} />

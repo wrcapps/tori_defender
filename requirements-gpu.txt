@@ -1,0 +1,6 @@
+# Optional, NVIDIA GPU machines only (installed by install.sh / install.ps1 when nvidia-smi is found).
+# Hardware (NVDEC) decoding of the live camera streams. Without it everything still works: the
+# service decodes on the CPU. Install with --no-deps (it only needs numpy, which is already there):
+#     pip install --no-deps -r requirements-gpu.txt
+# Also needs `ffmpeg` on PATH and a CUDA build of PyTorch. See docs/PERFORMANCE_12CAM.md.
+PyNvVideoCodec>=2.2

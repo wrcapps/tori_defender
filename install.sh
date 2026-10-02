@@ -67,14 +67,44 @@ fi
 source .venv/bin/activate
 pip install -q -r requirements.txt
 
+# GPU: nothing to choose. With an NVIDIA GPU the app uses it on its own (detection on CUDA, camera
+# video decoded by NVDEC); without one it runs on the CPU. Here we only add the optional NVDEC
+# piece, which is the one thing that is not in the base requirements.
+if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+  echo "NVIDIA GPU found: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
+  if ! python -c "import torch,sys; sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+    echo "  WARNING: this PyTorch cannot see the GPU (CPU-only build or driver problem)."
+    echo "  Detection will run on the CPU until a CUDA build of PyTorch is installed: https://pytorch.org/get-started/locally/"
+  fi
+  if command -v ffmpeg >/dev/null 2>&1; then
+    pip install -q --no-deps -r requirements-gpu.txt \
+      && echo "  NVDEC video decoding installed." \
+      || echo "  Could not install PyNvVideoCodec; video will be decoded on the CPU (everything still works)."
+  else
+    echo "  ffmpeg is not installed (sudo apt install ffmpeg), so NVDEC video decoding is skipped: video is decoded on the CPU."
+    echo "  Install ffmpeg, then run:  pip install --no-deps -r requirements-gpu.txt"
+  fi
+else
+  echo "No NVIDIA GPU detected: everything runs on the CPU (works, but slower with many cameras)."
+fi
+
 # ---- 4. config.yaml ----------------------------------------------------------
 if [ ! -f config.yaml ]; then
-  read -rp "Which site will this reviewer look at [corbu/babadag]: " SITE
-  cat > config.yaml <<EOF
-# Review-only config: no camera list needed to browse already-captured data.
-site: ${SITE}
-EOF
-  chmod 600 config.yaml
+  read -rp "Site name (short, lowercase, e.g. corbu or babadag): " SITE
+  CAM_HOSTS=""; CAM_USER="admin"; BIRD_CAM_PASSWORD=""
+  read -rp "Connect cameras now? [y/N]: " ADD_CAMS
+  if [[ "${ADD_CAMS:-n}" =~ ^[Yy] ]]; then
+    echo "The cameras' own login (the one you use in their web page), not this app's login."
+    read -rp "  camera username [admin]: " CAM_USER; CAM_USER="${CAM_USER:-admin}"
+    read -rsp "  camera password: " BIRD_CAM_PASSWORD; echo
+    echo "  Camera IP addresses, separated by commas or spaces (add =name to name one, e.g. 192.168.88.41=mast1-a)."
+    read -rp "  cameras: " CAM_HOSTS
+  fi
+  # The writer escapes everything and sets mode 600; the password travels in the environment, not in argv.
+  BIRD_CAM_PASSWORD="$BIRD_CAM_PASSWORD" python backend/make_config.py --site "$SITE" --user "$CAM_USER" \
+    --hosts "$CAM_HOSTS" --out config.yaml
+  unset BIRD_CAM_PASSWORD
+  [ -z "$CAM_HOSTS" ] && echo "No cameras added: Live will be empty. See 'Connecting your cameras' in README.md to add them later."
 fi
 
 echo

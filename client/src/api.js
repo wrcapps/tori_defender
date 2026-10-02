@@ -76,6 +76,10 @@ export const api = {
   alerts: () => request("GET", "/api/alerts"),
   acquisition: () => request("GET", "/api/acquisition"),
   setAcquisition: (enabled) => request("POST", "/api/acquisition", { enabled }),
+  settings: () => request("GET", "/api/settings"),
+  saveSettings: (changes) => request("POST", "/api/settings", changes),
+  devices: (refresh) => request("GET", `/api/devices${refresh ? "?refresh=1" : ""}`),
+  checkDataDir: (path) => request("GET", `/api/settings/check_dir?${new URLSearchParams({ path })}`),
   liveEvents: (since) => request("GET", `/api/live_events?${new URLSearchParams({ since })}`),
   riskPolicy: (site) => request("GET", `/api/risk_policy?${new URLSearchParams({ site })}`),
   cameraActivity: (site, camera) =>

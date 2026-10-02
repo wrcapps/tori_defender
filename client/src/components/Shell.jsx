@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { api } from "../api.js";
 import { useAuth } from "../AuthContext.jsx";
 import { useDetectionEvents } from "../hooks/useDetectionEvents.js";
 import NotificationBell from "./NotificationBell.jsx";
@@ -21,6 +22,7 @@ const OPERATOR_LINKS = [
   { to: "/app/inbox", label: "Inbox", badge: true },
   { to: "/app/review", label: "Review" },
   { to: "/app/dataset", label: "Dataset" },
+  { to: "/app/settings", label: "Settings" },
 ];
 
 export default function Shell() {
@@ -32,6 +34,16 @@ export default function Shell() {
   const { events, dismiss, clearAll } = useDetectionEvents();
   const acquisition = useAcquisition();
   const inbox = useInbox(role === "operator");
+  // First run: send the operator to the setup once, from wherever they landed.
+  const navigate = useNavigate();
+  const location = useLocation();
+  useEffect(() => {
+    if (role !== "operator") return;
+    api.settings().then((s) => {
+      if (s.setup_needed && location.pathname !== "/app/setup") navigate("/app/setup", { replace: true });
+    }).catch(() => {});   // settings unavailable: the rest of the app is unaffected
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role]);
   const pendingCount = (inbox.windows || []).filter((w) => w.undecided > 0).length;
 
   return (

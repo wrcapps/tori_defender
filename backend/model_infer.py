@@ -167,13 +167,16 @@ def detect_frame(image: np.ndarray, tile: int, infer_fn, overlap: int = 128,
     return kept
 
 
-def build_infer(weights: str, tile: int = 640, conf: float = 0.25, half: bool = True):
+def build_infer(weights: str, tile: int = 640, conf: float = 0.25, half: bool = True,
+                device: str | None = None):
     """A tiles -> per-tile detections function for a finetuned YOLO model.
 
     half=True by default: FP16 was measured to cost no accuracy on this model
     while cutting inference time ~1.5x and VRAM ~46%, which is what makes more
     than a couple of camera processes fit on one GPU at all. Ultralytics falls
     back to FP32 by itself on a device without FP16 support.
+
+    device=None leaves the choice to ultralytics (GPU if there is one); "cpu" forces CPU.
     """
     import logging
 
@@ -192,9 +195,49 @@ def build_infer(weights: str, tile: int = 640, conf: float = 0.25, half: bool = 
     model = YOLO(weights)
 
     def infer(tiles):
-        results = model.predict(tiles, imgsz=tile, conf=conf, half=half, verbose=False)
+        results = model.predict(tiles, imgsz=tile, conf=conf, half=half, device=device,
+                                  verbose=False)
         return [[{"bbox": box.xyxy[0].tolist(), "conf": float(box.conf[0]),
                   "cls": r.names[int(box.cls)]} for box in r.boxes] for r in results]
+
+    return infer
+
+
+def build_infer_rfdetr(weights: str, variant: str = "nano", tile: int = 640, conf: float = 0.25,
+                       device: str | None = None):
+    """A tiles -> per-tile detections function for a finetuned RF-DETR
+    checkpoint -- same contract as build_infer() above, so live_capture.py's
+    detect_frame() call needs no change to use either model.
+
+    RF-DETR (github.com/roboflow/rf-detr, Apache-2.0) is a transformer
+    detector, not a drop-in YOLO checkpoint -- the finetuned single-class
+    weights (checkpoint_best_ema.pth from the research tree's
+    `rfdetr_infer.py`/`eval_rfdetr.py`) load through the `rfdetr` package's
+    own variant classes, keyed by `variant` (nano/small/medium/base/large --
+    must match what the checkpoint was actually finetuned as, or the class
+    head shape won't match). `threshold` is passed low (0.01) to the model
+    itself and the real `conf` floor applied after, matching every other
+    infer_fn here: detect_frame()/process_jobs-style batching elsewhere in
+    this codebase always filters post-hoc so a caller can lower `conf`
+    without reloading the model.
+    """
+    from rfdetr import RFDETRBase, RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
+
+    variants = {"nano": RFDETRNano, "small": RFDETRSmall, "medium": RFDETRMedium,
+               "base": RFDETRBase, "large": RFDETRLarge}
+    if variant not in variants:
+        raise ValueError(f"unknown RF-DETR variant {variant!r} (have: {', '.join(variants)})")
+    extra = {"device": device} if device else {}
+    model = variants[variant](pretrain_weights=weights, **extra)
+
+    def infer(tiles):
+        rgb = [np.ascontiguousarray(t[..., ::-1]) for t in tiles]  # BGR -> RGB, contiguous
+        dets = model.predict(rgb, threshold=0.01)
+        if not isinstance(dets, list):
+            dets = [dets]
+        return [[{"bbox": d.xyxy[i].tolist(), "conf": float(d.confidence[i]), "cls": "bird"}
+                 for i in range(len(d.confidence)) if d.confidence[i] >= conf]
+                for d in dets]
 
     return infer
 

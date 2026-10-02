@@ -1,0 +1,72 @@
+.set-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.set-title { margin: 0; font-size: 15px; }
+
+.set-help { margin: 0; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+.set-help code, .set-note code { font-family: var(--font-mono); font-size: 12px; color: var(--text); word-break: break-all; }
+
+.set-options { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.set-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: left;
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  transition: border-color var(--transition), background var(--transition);
+}
+.set-option:hover:not(:disabled) { border-color: var(--brand-border); }
+.set-option.is-checked { border-color: var(--brand); background: var(--brand-bg); }
+.set-option:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.set-radio {
+  flex: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--text-faint);
+}
+.set-option.is-checked .set-radio { border-color: var(--brand); background: radial-gradient(var(--brand) 40%, transparent 45%); }
+
+.set-option-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.set-option-title { font-size: 14px; font-weight: 600; }
+.set-option-meta { font-size: 12px; color: var(--text-dim); overflow-wrap: anywhere; }
+
+.set-field { display: block; }
+.set-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 10px 12px;
+}
+.set-input:focus { border-color: var(--brand); }
+
+.set-status { display: flex; flex-direction: column; gap: var(--space-1); font-size: 13px; }
+.set-note { font-size: 13px; color: var(--text-dim); }
+.set-note.ok { color: var(--accent); }
+.set-note.warn { color: var(--warn); margin: 0; }
+.set-note.bad { color: var(--danger); }
+.set-sites { margin: 0; padding-left: 18px; color: var(--text-dim); font-size: 13px; }
+.set-sites li.bad { color: var(--danger); }
+
+.set-link {
+  background: none; border: 0; padding: 0;
+  color: var(--info); text-decoration: underline; cursor: pointer; font-size: inherit;
+}

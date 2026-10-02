@@ -9,9 +9,10 @@ users.yaml
 # NAS connection settings. Only nas.example.env is tracked.
 nas.env
 
-# Client app: build output and installed packages, not source.
+# Client app: installed packages are not source. client/dist/ (the BUILT UI, ~300 KB) IS shipped,
+# so a machine without Node can run the app; rebuild it with `npm run build` in client/ after any
+# change under client/src/.
 client/node_modules/
-client/dist/
 
 # ffmpeg/OpenCV echo the full RTSP URL, password included, when a stream fails.
 logs/
@@ -23,7 +24,25 @@ sites/
 *.pt
 *.pth
 
+# Per-install choices made in the app (model, data folder), and the model files themselves.
+settings.yaml
+models/*
+!models/README.md
+
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Desktop build output (desktop/build.py).
+/dist/
+/build/
+
+# Stray pip downloads, and our own benchmark rig (internal, tied to this box).
+*.whl
+bench/
+
+# Internal docs are not part of the client deliverable; the two the README points to are.
+docs/*
+!docs/ADVANCED.md
+!docs/DATA_LAYOUT.md

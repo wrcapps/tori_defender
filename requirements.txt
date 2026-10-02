@@ -2,3 +2,7 @@ opencv-python>=4.8
 numpy>=1.24
 PyYAML>=6.0
 ultralytics>=8.3
+rfdetr>=1.10  # only needed for model.type: rfdetr; inference only, no [train] extras
+# NVIDIA GPU machines: also `pip install --no-deps -r requirements-gpu.txt` (NVDEC video decode).
+# The install scripts do this for you. No GPU needed for anything else: the app picks the GPU
+# when there is one and runs on the CPU when there is not.

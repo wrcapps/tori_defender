@@ -91,6 +91,7 @@ class DatasetIndex:
         self.by_id: dict[str, dict] = {}
         self.by_tile: dict[tuple[str, str], list[dict]] = {}
         self.counts: dict[str, int] = {}
+        self.split_counts: dict[str, int] = {}
         self.tiles_with_labels = 0
         self.tiles_empty = 0
         self.decisions: dict = {}
@@ -131,8 +132,10 @@ class DatasetIndex:
         order = {c: i for i, c in enumerate(CATEGORY_ORDER)}
         items.sort(key=lambda it: (order.get(it["category"], 99), -it["severity"]))
         counts: dict[str, int] = {}
+        split_counts: dict[str, int] = {}
         for it in items:
             counts[it["category"]] = counts.get(it["category"], 0) + 1
+            split_counts[it["split"]] = split_counts.get(it["split"], 0) + 1
         by_tile: dict[tuple[str, str], list[dict]] = {}
         for it in items:
             by_tile.setdefault((it["split"], it["stem"]), []).append(it)
@@ -141,6 +144,7 @@ class DatasetIndex:
             self.by_id = {it["id"]: it for it in items}
             self.by_tile = by_tile
             self.counts = counts
+            self.split_counts = split_counts
             self.tiles_with_labels = with_labels
             self.tiles_empty = empty
 
@@ -159,13 +163,18 @@ class DatasetIndex:
                 "categories": [
                     {"name": c, "count": self.counts.get(c, 0), "help": CATEGORY_HELP[c]}
                     for c in CATEGORY_ORDER if self.counts.get(c)],
+                "splits": [
+                    {"name": s, "count": self.split_counts.get(s, 0)}
+                    for s in self.splits if self.split_counts.get(s)],
             }
 
-    def page(self, category: str | None, offset: int, limit: int, hide_done: bool) -> dict:
+    def page(self, category: str | None, split: str | None, offset: int, limit: int, hide_done: bool) -> dict:
         with self.lock:
             items = self.items
             if category and category != "all":
                 items = [it for it in items if it["category"] == category]
+            if split and split != "all":
+                items = [it for it in items if it["split"] == split]
             if hide_done:
                 items = [it for it in items if it["id"] not in self.decisions]
             total = len(items)
