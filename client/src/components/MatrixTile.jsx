@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React from "react";
+import LiveCanvas from "./LiveCanvas.jsx";
 import StatusPill from "./StatusPill.jsx";
 import { deriveKind } from "../lib/grouping.js";
 import "./MatrixTile.css";
@@ -10,20 +11,10 @@ import "./MatrixTile.css";
 // its own page or the site grid, not a wall-of-video action).
 export default function MatrixTile({ camera }) {
   const kind = deriveKind(camera);
-  const [imgFailed, setImgFailed] = useState(false);
 
   return (
     <div className={`matrix-tile kind-${kind}`}>
-      {!imgFailed ? (
-        <img
-          key={kind === "error" ? "err" : "ok"}
-          src={`/stream/${encodeURIComponent(camera.name)}.mjpg`}
-          alt={`Live view from ${camera.name}`}
-          onError={() => setImgFailed(true)}
-        />
-      ) : (
-        <div className="matrix-tile-fallback"><span>Stream unavailable</span></div>
-      )}
+      <LiveCanvas camera={camera.name} alt={`Live view from ${camera.name}`} />
       {camera.recording && (
         <span className="matrix-tile-rec"><span className="matrix-tile-rec-dot" /> REC</span>
       )}

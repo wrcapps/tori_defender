@@ -7,6 +7,7 @@ const PAGE_SIZE = 48;
 export default function Dataset() {
   const [summary, setSummary] = useState(null);
   const [category, setCategory] = useState("all");
+  const [split, setSplit] = useState("val");
   const [offset, setOffset] = useState(0);
   const [hideDone, setHideDone] = useState(false);
   const [items, setItems] = useState(null);
@@ -25,6 +26,7 @@ export default function Dataset() {
       const data = await api.datasetSummary();
       setSummary(data);
       setError(null);
+      if (!(data.splits || []).some((s) => s.name === "val")) setSplit("all");
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "network-error");
     }
@@ -36,7 +38,7 @@ export default function Dataset() {
     if (!summary || !summary.dataset) return;
     try {
       const data = await api.datasetItems({
-        category, offset, limit: PAGE_SIZE, hide_done: hideDone ? 1 : 0,
+        category, split, offset, limit: PAGE_SIZE, hide_done: hideDone ? 1 : 0,
       });
       setItems(data.items);
       setTotal(data.total);
@@ -44,12 +46,17 @@ export default function Dataset() {
       setStatus("could not load this page");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [summary, category, offset, hideDone]);
+  }, [summary, category, split, offset, hideDone]);
 
   useEffect(() => { loadPage(); }, [loadPage]);
 
   function selectCategory(name) {
     setCategory(name);
+    setOffset(0);
+  }
+
+  function selectSplit(name) {
+    setSplit(name);
     setOffset(0);
   }
 
@@ -106,6 +113,19 @@ export default function Dataset() {
       <div className="dataset-head">
         <span className="tick-label">Dataset</span>
         <span className="dataset-path">{summary.dataset}</span>
+        {(summary.splits || []).length > 1 && (
+          <div className="dataset-splits">
+            {[{ name: "all", count: summary.labels }].concat(summary.splits).map((s) => (
+              <button
+                key={s.name} type="button"
+                className={`dataset-split-btn ${s.name === split ? "is-current" : ""}`}
+                onClick={() => selectSplit(s.name)}
+              >
+                {s.name} <span>{s.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <span className="dataset-status">{status}</span>
       </div>
 

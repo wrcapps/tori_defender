@@ -37,6 +37,32 @@
   color: var(--warn);
 }
 
+.view-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.view-toggle button {
+  background: var(--surface-2);
+  border: none;
+  color: var(--text-dim);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.view-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.view-toggle button.is-active {
+  background: var(--brand-bg);
+  color: var(--brand);
+}
+
 .watch-all-btn {
   display: inline-block;
   background: var(--surface-2);

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useCameras } from "../hooks/useCameras.js";
+import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
 import MatrixTile from "../components/MatrixTile.jsx";
 import "./Matrix.css";
@@ -13,6 +14,7 @@ import "./Matrix.css";
 // doesn't add a new one, it just puts many of them on screen together.
 export default function Matrix() {
   const { site } = useParams();
+  const { role } = useAuth();
   const { rows, error, reconnecting } = useCameras();
   const [capacity, setCapacity] = useState(null);
 
@@ -57,14 +59,17 @@ export default function Matrix() {
       <div className="matrix-head">
         <Link to={`/app/live/${encodeURIComponent(site)}`} className="matrix-back">← {site}</Link>
         <h2 className="matrix-title">{site} · all cameras</h2>
-        {capacity && (
+        {capacity && role === "operator" && (
           <span className={`capacity-note ${overBudget ? "is-over" : ""}`}>
             {capacity.cameras} cameras · {capacity.peak_demand.toFixed(1)} / {capacity.gpu_fps.toFixed(1)} GPU budget
           </span>
         )}
+        {capacity && role !== "operator" && overBudget && (
+          <span className="capacity-note is-over">Watching everything at once may slow things down</span>
+        )}
       </div>
 
-      {overBudget && (
+      {overBudget && role === "operator" && (
         <div className="live-banner" role="status">
           {capacity.warning}
         </div>

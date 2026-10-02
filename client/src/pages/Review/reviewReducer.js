@@ -23,14 +23,14 @@ export const initialReviewState = {
   frameBoxes: [],        // current frame's model boxes: {bbox, conf, track, carried, crop, edited?}
   selectedTrack: null,
   verdicts: {},          // {track_id: keep|drop|unsure}
-  trackMeta: {},         // {track_id: {species, distance, size}}
+  trackMeta: {},         // {track_id: {species, distance, size, risk}}
   manualBoxes: [],
   speciesSeen: [],
   history: [],           // [{id, prev}] undo stack
   selected: null,        // {kind:"model", track} | {kind:"manual", id}
   moveMode: false,
   pencil: false,
-  follow: null,          // {track, history: [[x0,y0,x1,y1], ...]}
+  follow: null,          // {track, history: [[x0,y0,x1,y1], ...], meta: {species,distance,size,risk}}
   nativeW: 0,
   nativeH: 0,
   // Fixed for as long as a folder stays open (set once, at FOLDER_OPENED,
@@ -179,7 +179,7 @@ export function reviewReducer(state, action) {
     }
 
     case "FOLLOW_STARTED":
-      return { ...state, follow: { track: action.track, history: [action.bbox] }, moveMode: true };
+      return { ...state, follow: { track: action.track, history: [action.bbox], meta: action.meta || {} }, moveMode: true };
 
     case "FOLLOW_STOPPED":
       return { ...state, follow: null };

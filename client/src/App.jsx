@@ -11,6 +11,8 @@ import Sightings from "./pages/Sightings.jsx";
 import Species from "./pages/Species.jsx";
 import Review from "./pages/Review/Review.jsx";
 import Dataset from "./pages/Dataset.jsx";
+import TrackView from "./pages/TrackView.jsx";
+import Inbox from "./pages/Inbox.jsx";
 
 function RequireAuth({ children }) {
   const { status } = useAuth();
@@ -65,8 +67,10 @@ export default function App() {
           <Route path="live/:site" element={<SiteDetail />} />
           <Route path="live/:site/matrix" element={<Matrix />} />
           <Route path="live/:site/camera/:name" element={<CameraDetail />} />
+          <Route path="live/:site/track/:trackId" element={<TrackView />} />
           <Route path="sightings" element={<Sightings />} />
           <Route path="species" element={<Species />} />
+          <Route path="inbox" element={<RequireOperator><Inbox /></RequireOperator>} />
           <Route path="review" element={<RequireOperator><Review /></RequireOperator>} />
           <Route path="dataset" element={<RequireOperator><Dataset /></RequireOperator>} />
           <Route path="*" element={<Navigate to="live" replace />} />

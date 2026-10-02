@@ -1,6 +1,11 @@
 import React, { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../AuthContext.jsx";
+import { useDetectionEvents } from "../hooks/useDetectionEvents.js";
+import NotificationBell from "./NotificationBell.jsx";
+import AcquisitionButton from "./AcquisitionButton.jsx";
+import { useAcquisition } from "../hooks/useAcquisition.js";
+import { useInbox } from "../hooks/useInbox.js";
 import "./Shell.css";
 
 const CLIENT_NAV = [
@@ -13,6 +18,7 @@ const CLIENT_NAV = [
 // /dataset pages (M4b): same login, same backend API, now inside this one
 // app's shell and nav instead of a separate full-page-reload tool.
 const OPERATOR_LINKS = [
+  { to: "/app/inbox", label: "Inbox", badge: true },
   { to: "/app/review", label: "Review" },
   { to: "/app/dataset", label: "Dataset" },
 ];
@@ -20,6 +26,13 @@ const OPERATOR_LINKS = [
 export default function Shell() {
   const { username, role, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  // One feed for the whole shell, not per-page -- a detection notification
+  // should still reach whoever's watching Review or Sightings, not just
+  // someone sitting on the Live page.
+  const { events, dismiss, clearAll } = useDetectionEvents();
+  const acquisition = useAcquisition();
+  const inbox = useInbox(role === "operator");
+  const pendingCount = (inbox.windows || []).filter((w) => w.undecided > 0).length;
 
   return (
     <div className="shell">
@@ -60,6 +73,7 @@ export default function Shell() {
                   onClick={() => setMenuOpen(false)}
                 >
                   {item.label}
+                  {item.badge && pendingCount > 0 && <span className="shell-badge">{pendingCount}</span>}
                 </NavLink>
               ))}
             </>
@@ -67,6 +81,12 @@ export default function Shell() {
         </nav>
 
         <div className="shell-user">
+          <AcquisitionButton
+            status={acquisition.status} error={acquisition.error}
+            reconnecting={acquisition.reconnecting} busy={acquisition.busy}
+            onToggle={acquisition.setEnabled}
+          />
+          <NotificationBell events={events} onDismiss={dismiss} onClearAll={clearAll} />
           <span className="shell-role" title={`Signed in as ${username}`}>
             {role}
           </span>

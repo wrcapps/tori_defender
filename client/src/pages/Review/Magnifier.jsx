@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 const MAG_NATIVE = 224; // matches the saved crops, so magnifier and crops agree
 const MAG_OUT = 260;
@@ -10,6 +10,7 @@ function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 // downscaled) displayed image, so a 10-45px bird is actually legible.
 export default function Magnifier({ imgRef, nativeW, point, boxes, hint }) {
   const canvasRef = useRef(null);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -18,7 +19,13 @@ export default function Magnifier({ imgRef, nativeW, point, boxes, hint }) {
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, MAG_OUT, MAG_OUT);
-    if (!point || !nativeW || !img || !img.naturalWidth) return;
+    if (!point || !nativeW || !img) return;
+    if (!img.naturalWidth) {
+      // Arrived before the frame did (e.g. opened from a notification): draw once it loads.
+      const redraw = () => { img.removeEventListener("load", redraw); setTick((t) => t + 1); };
+      img.addEventListener("load", redraw);
+      return () => img.removeEventListener("load", redraw);
+    }
 
     const k = img.naturalWidth / nativeW;
     const span = MAG_NATIVE * k;
@@ -32,7 +39,7 @@ export default function Magnifier({ imgRef, nativeW, point, boxes, hint }) {
       ctx.lineWidth = 2;
       ctx.strokeRect((x0 * k - sx) * z, (y0 * k - sy) * z, (x1 - x0) * k * z, (y1 - y0) * k * z);
     });
-  }, [imgRef, nativeW, point, boxes]);
+  }, [imgRef, nativeW, point, boxes, tick]);
 
   return (
     <section className="review-section">

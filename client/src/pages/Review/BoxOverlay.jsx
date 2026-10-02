@@ -5,7 +5,7 @@ import React, { useEffect, useRef, useState } from "react";
 // local (not in the reducer) -- a mouse-move fires far more often than
 // anything that should re-render the rest of Review's sidebar.
 export default function BoxOverlay({
-  nativeW, nativeH, frameBoxes, manualBoxes, selectedTrack, selected,
+  nativeW, nativeH, trail, currentIdx, pxScale, frameBoxes, manualBoxes, selectedTrack, selected,
   followTrack, pencil, moveMode,
   onSelectModel, onSelectManual, onBoxMoved, onPencilBoxDrawn, onPencilPreview,
 }) {
@@ -131,6 +131,23 @@ export default function BoxOverlay({
       onMouseMove={handlePencilMove}
       onClick={handlePencilClick}
     >
+      {trail && trail.length >= 2 && (() => {
+        // Dots stay a constant ~5 screen px however far the view is zoomed.
+        const r = 5 / Math.max(pxScale || 1, 0.02);
+        const pts = (list) => list.map(([, x, y]) => `${x},${y}`).join(" ");
+        const past = trail.filter(([i]) => i <= currentIdx);
+        const ahead = trail.filter(([i]) => i >= currentIdx);
+        return (
+          <g className="review-trail" pointerEvents="none">
+            {past.length >= 2 && <polyline className="review-trail-past" points={pts(past)} />}
+            {ahead.length >= 2 && <polyline className="review-trail-ahead" points={pts(ahead)} />}
+            {trail.map(([i, x, y], k) => (
+              <circle key={`${i}-${k}`} cx={x} cy={y} r={i === currentIdx ? r * 1.5 : r}
+                      className={i === currentIdx ? "review-trail-now" : (i < currentIdx ? "review-trail-dot" : "review-trail-dot ahead")} />
+            ))}
+          </g>
+        );
+      })()}
       {frameBoxes.map((b) => {
         const [x0, y0, x1, y1] = draggedBBox("model", b.track) || b.bbox;
         const cls = b.track === selectedTrack ? "mine" : (b.carried ? "carried" : "other");

@@ -1,0 +1,40 @@
+.acq { position: relative; display: flex; align-items: stretch; }
+.acq-toggle {
+  display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm); font-size: 12px; font-weight: 600; cursor: pointer;
+  white-space: nowrap;
+}
+.acq-toggle:disabled { cursor: default; opacity: 0.75; }
+.acq-toggle:not(:disabled):hover { color: var(--text); border-color: var(--brand-border); }
+.acq-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.acq-sub { font-weight: 500; color: var(--text-faint); font-size: 11px; }
+.acq-on { color: var(--text); border-color: var(--accent); }
+.acq-on .acq-dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.acq-partial .acq-dot { background: var(--warn); }
+.acq-wait .acq-dot { background: var(--warn); animation: acq-pulse 1.1s ease-in-out infinite; }
+.acq-warn { border-color: var(--warn); }
+.acq-warn .acq-dot { background: var(--warn); }
+.acq-bad { border-color: var(--danger); color: var(--danger); }
+.acq-bad .acq-dot { background: var(--danger); }
+@keyframes acq-pulse { 50% { opacity: 0.25; } }
+.acq-more {
+  width: 24px; background: var(--surface-2); border: 1px solid var(--border); border-left: none;
+  color: var(--text-dim); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; cursor: pointer; font-size: 11px;
+}
+.acq-more:hover { color: var(--text); }
+.acq-panel {
+  position: absolute; right: 0; top: calc(100% + var(--space-2)); width: 340px; z-index: 20;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card); padding: var(--space-3); font-size: 12px; display: grid; gap: 8px;
+}
+.acq-msg { padding: 6px 8px; border-radius: var(--radius-sm); border: 1px solid; }
+.acq-msg.bad { color: var(--danger); border-color: var(--danger); }
+.acq-msg.warn { color: var(--warn); border-color: var(--warn); }
+.acq-note { color: var(--text-dim); line-height: 1.5; }
+.acq-stats { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; margin: 0; color: var(--text-dim); }
+.acq-stats dt { color: var(--text-faint); }
+.acq-stats dd { margin: 0; font-variant-numeric: tabular-nums; color: var(--text); }
+@media (max-width: 780px) { .acq-sub { display: none; } }
+.acq-warn-text { color: var(--warn); }
+.acq-bad-text { color: var(--danger); }

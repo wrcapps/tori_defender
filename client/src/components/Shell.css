@@ -124,3 +124,5 @@
   .shell-nav.is-open { display: flex; }
   .shell-user { margin-left: 0; order: 3; }
 }
+
+.shell-badge { margin-left: 6px; padding: 0 7px; border-radius: 999px; background: #b7791f; color: #fff; font-size: 11px; line-height: 18px; display: inline-block; }

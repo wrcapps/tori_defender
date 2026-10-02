@@ -10,7 +10,8 @@
 .matrix-tile.kind-live { border-color: rgba(53, 212, 138, 0.35); }
 .matrix-tile.kind-error { border-color: rgba(255, 84, 112, 0.4); }
 
-.matrix-tile img {
+.matrix-tile img,
+.matrix-tile canvas {
   width: 100%;
   height: 100%;
   object-fit: cover;

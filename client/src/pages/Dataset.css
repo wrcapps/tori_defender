@@ -11,6 +11,15 @@
 .dataset-path { color: var(--text-dim); font-size: 12px; word-break: break-all; }
 .dataset-status { color: var(--warn); font-size: 12px; margin-left: auto; }
 
+.dataset-splits { display: flex; gap: var(--space-1); }
+.dataset-split-btn {
+  padding: 2px var(--space-2); border-radius: var(--radius-sm); border: 1px solid transparent;
+  background: none; color: var(--text-dim); font-size: 12px; cursor: pointer;
+}
+.dataset-split-btn:hover { background: var(--surface-2); }
+.dataset-split-btn.is-current { background: var(--brand-bg); border-color: var(--brand-border); color: var(--text); }
+.dataset-split-btn span { color: var(--text-dim); margin-left: 4px; }
+
 .dataset-progress-bar { height: 3px; background: var(--surface-2); border-radius: 2px; overflow: hidden; }
 .dataset-progress-bar > div { height: 3px; background: var(--accent); transition: width 0.2s; }
 .dataset-counts { margin-top: var(--space-1); font-size: 12px; color: var(--text-dim); }

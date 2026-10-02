@@ -71,6 +71,22 @@ export const api = {
   sightings: (params) => request("GET", `/api/sightings?${new URLSearchParams(params)}`),
   speciesSummary: (site) => request("GET", `/api/species?${new URLSearchParams({ site })}`),
 
+  // ---- live notifications / per-camera detail ----
+  recentDetections: () => request("GET", "/api/recent_detections"),
+  alerts: () => request("GET", "/api/alerts"),
+  acquisition: () => request("GET", "/api/acquisition"),
+  setAcquisition: (enabled) => request("POST", "/api/acquisition", { enabled }),
+  liveEvents: (since) => request("GET", `/api/live_events?${new URLSearchParams({ since })}`),
+  riskPolicy: (site) => request("GET", `/api/risk_policy?${new URLSearchParams({ site })}`),
+  cameraActivity: (site, camera) =>
+    request("GET", `/api/camera_activity?${new URLSearchParams({ site, camera })}`),
+  inbox: (site) => request("GET", `/api/inbox?${new URLSearchParams({ site })}`),
+  review: (site, id, decision, reason, note) =>
+    request("POST", "/api/review", { site, id, decision, reason, note }),
+  undoReview: (site, day, windowName) =>
+    request("POST", "/api/review/undo", { site, day, window: windowName }),
+  track: (site, id) => request("GET", `/api/track?${new URLSearchParams({ site, id })}`),
+
   // ---- Review (M4b) ----
   folders: (site) => request("GET", `/api/folders?${new URLSearchParams({ site })}`),
   folder: (site, id) => request("GET", `/api/folder?${new URLSearchParams({ site, id })}`),

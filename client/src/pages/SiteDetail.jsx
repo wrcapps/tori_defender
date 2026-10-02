@@ -6,6 +6,7 @@ import { api } from "../api.js";
 import { groupByMast } from "../lib/grouping.js";
 import MastMap from "../components/MastMap.jsx";
 import CameraCard from "../components/CameraCard.jsx";
+import CameraWall from "../components/CameraWall.jsx";
 import "./SiteDetail.css";
 
 export default function SiteDetail() {
@@ -22,6 +23,10 @@ export default function SiteDetail() {
   const [previewing, setPreviewing] = useState(() => new Set());
   const [capacity, setCapacity] = useState(null);
   const [pollTick, setPollTick] = useState(0);
+  // "grid" (security-wall) is the default live view; "layout" is today's
+  // mast-schematic view, kept one click away rather than removed.
+  const [view, setView] = useState("grid");
+  const [recentByCamera, setRecentByCamera] = useState({});
 
   useEffect(() => { setPollTick((t) => t + 1); }, [rows]);
 
@@ -31,6 +36,28 @@ export default function SiteDetail() {
       .then((data) => !cancelled && setCapacity(data))
       .catch(() => {});
     return () => { cancelled = true; };
+  }, [site]);
+
+  // Feeds the grid's per-tile activity chip -- its own page-scoped poll
+  // (same pattern as the capacity fetch above), not the shell-wide
+  // notification feed, since this only needs "latest per camera on this
+  // site", not the cross-site event queue.
+  useEffect(() => {
+    let cancelled = false;
+    function load() {
+      api.recentDetections()
+        .then((detections) => {
+          if (cancelled) return;
+          const bySite = detections.filter((r) => r.site === site);
+          const byCamera = {};
+          for (const row of bySite) if (!byCamera[row.camera]) byCamera[row.camera] = row;
+          setRecentByCamera(byCamera);
+        })
+        .catch(() => {});
+    }
+    load();
+    const id = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(id); };
   }, [site]);
 
   if (rows === null && !error) return <div className="state-page skeleton-block" style={{ height: 320 }} />;
@@ -87,12 +114,35 @@ export default function SiteDetail() {
         <h2 className="site-detail-title">{site}</h2>
 
         <div className="site-detail-watchall">
-          {capacity && (
+          {/* Operators see the exact numeric budget they need to size camera
+              load; a client gets a plain-language line, and only once it
+              actually matters (over budget) -- raw "peak_demand / gpu_fps"
+              numbers are infra jargon with no action a client can take. */}
+          {capacity && role === "operator" && (
             <span className={`capacity-note ${overBudget ? "is-over" : ""}`}>
               {capacity.cameras} camera{capacity.cameras === 1 ? "" : "s"} · {capacity.peak_demand.toFixed(1)}
               {" / "}{capacity.gpu_fps.toFixed(1)} GPU budget if all watched at once
             </span>
           )}
+          {capacity && role !== "operator" && overBudget && (
+            <span className="capacity-note is-over">
+              Watching every camera at once may slow things down here
+            </span>
+          )}
+          <div className="view-toggle" role="group" aria-label="Live view">
+            <button
+              type="button" className={view === "grid" ? "is-active" : ""}
+              onClick={() => setView("grid")}
+            >
+              Grid
+            </button>
+            <button
+              type="button" className={view === "layout" ? "is-active" : ""}
+              onClick={() => setView("layout")}
+            >
+              Layout
+            </button>
+          </div>
           <Link to={`/app/live/${encodeURIComponent(site)}/matrix`} className="watch-all-btn">
             Watch all (360°)
           </Link>
@@ -102,12 +152,15 @@ export default function SiteDetail() {
       {/* Shown here too, before anyone even clicks through to Matrix -- the
           consequence (real bandwidth/GPU load) should be visible at the
           point of decision, not just on the page it leads to. */}
-      {overBudget && (
+      {overBudget && role === "operator" && (
         <div className="live-banner" role="status">
           {capacity.warning}
         </div>
       )}
 
+      {view === "grid" ? (
+        <CameraWall cameras={cameras} recentByCamera={recentByCamera} pollTick={pollTick} />
+      ) : (
       <div className="site-detail-layout">
         <div className="site-detail-map">
           <span className="tick-label">Layout</span>
@@ -150,6 +203,7 @@ export default function SiteDetail() {
           ))}
         </div>
       </div>
+      )}
     </div>
   );
 }

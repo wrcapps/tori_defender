@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
+import LiveCanvas from "./LiveCanvas.jsx";
 import StatusPill from "./StatusPill.jsx";
 import { deriveKind } from "../lib/grouping.js";
 import "./CameraCard.css";
@@ -22,10 +23,6 @@ export default function CameraCard({
   previewing, onTogglePreview, pollTick,
 }) {
   const kind = useMemo(() => deriveKind(camera), [camera]);
-  const [imgFailed, setImgFailed] = useState(false);
-  // Force a fresh <img> mount whenever the live stream is (re)acquired after
-  // an error, so a dropped MJPEG connection doesn't just sit on a frozen frame.
-  const streamKey = `${camera.name}:${kind === "error" ? "err" : "ok"}`;
 
   function togglePreview(e) {
     // This card sits inside a <Link> (the site detail page's mast grid) that
@@ -33,7 +30,6 @@ export default function CameraCard({
     // this click would also follow that link.
     e.preventDefault();
     e.stopPropagation();
-    setImgFailed(false);
     onTogglePreview(camera.name);
   }
 
@@ -41,16 +37,7 @@ export default function CameraCard({
     <div className={`cam-card kind-${kind}`}>
       <div className="cam-card-media">
         {previewing ? (
-          !imgFailed ? (
-            <img
-              key={streamKey}
-              src={`/stream/${encodeURIComponent(camera.name)}.mjpg`}
-              alt={`Live view from ${camera.name}`}
-              onError={() => setImgFailed(true)}
-            />
-          ) : (
-            <div className="cam-card-fallback"><span>Stream unavailable</span></div>
-          )
+          <LiveCanvas camera={camera.name} alt={`Live view from ${camera.name}`} />
         ) : (
           // A still frame, cache-busted by the shared poll tick so it visibly
           // advances -- but it is only ever what some *other* already-running

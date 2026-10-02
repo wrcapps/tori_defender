@@ -16,7 +16,7 @@ const FrameViewport = forwardRef(function FrameViewport({
   pencil, moveMode, selectedTrack, selected, followTrack,
   frameBoxes, manualBoxesForFrame,
   onScrub, onSelectModel, onSelectManual, onBoxMoved,
-  onPencilBoxDrawn, onPencilPreview, onNativeSizeDetected, onZoomChange,
+  onPencilBoxDrawn, onPencilPreview, onNativeSizeDetected, onZoomChange, trail,
 }, ref) {
   const viewportRef = useRef(null);
   const stageRef = useRef(null);
@@ -26,21 +26,43 @@ const FrameViewport = forwardRef(function FrameViewport({
 
   const wantsNative = pencil || nativeSizeUnknown || scale > 1.05;
 
+  // True while the view is "fit to window": a window resize then re-fits instead of
+  // leaving the image at a stale size. Any manual zoom clears it.
+  const fittedRef = useRef(true);
+  const [panning, setPanning] = useState(false);
+  const gestureRef = useRef(null);
+  const panRef = useRef(null);
+  const movedRef = useRef(false);
+
   function applyScale(next, anchorX, anchorY) {
     const viewport = viewportRef.current, stage = stageRef.current;
     if (!nativeW || !viewport || !stage) return;
     const rect = viewport.getBoundingClientRect();
-    const ax = anchorX != null ? anchorX - rect.left : rect.width / 2;
-    const ay = anchorY != null ? anchorY - rect.top : rect.height / 2;
-    const beforeX = viewport.scrollLeft + ax, beforeY = viewport.scrollTop + ay;
+    const ax = anchorX != null ? anchorX : rect.left + rect.width / 2;
+    const ay = anchorY != null ? anchorY : rect.top + rect.height / 2;
+    // Which native pixel is under the anchor -- measured against the stage itself,
+    // so it stays right while the stage is smaller than the viewport and centred.
+    const before = stage.getBoundingClientRect();
+    const oldScale = scaleRef.current || 1;
+    // Within one wheel gesture keep the SAME native point under the cursor. Re-deriving it
+    // on every tick drifts while the image is still smaller than the window and centred.
+    const now = performance.now(), g = gestureRef.current;
+    let nx, ny;
+    if (anchorX != null && g && now - g.t < 500 && g.ax === ax && g.ay === ay) {
+      nx = g.nx; ny = g.ny;
+    } else {
+      nx = (ax - before.left) / oldScale; ny = (ay - before.top) / oldScale;
+    }
+    if (anchorX != null) gestureRef.current = { nx, ny, ax, ay, t: now };
     const clamped = clamp(next, 0.05, 24);
-    const ratio = clamped / (scaleRef.current || 1);
     scaleRef.current = clamped;
+    fittedRef.current = false;
     setScale(clamped);
     stage.style.width = `${nativeW * clamped}px`;
     stage.style.height = `${nativeH * clamped}px`;
-    viewport.scrollLeft = beforeX * ratio - ax;
-    viewport.scrollTop = beforeY * ratio - ay;
+    const after = stage.getBoundingClientRect();
+    viewport.scrollLeft += after.left + nx * clamped - ax;
+    viewport.scrollTop += after.top + ny * clamped - ay;
     onZoomChange(Math.round(clamped * 100));
   }
 
@@ -51,6 +73,7 @@ const FrameViewport = forwardRef(function FrameViewport({
     applyScale(Math.min(viewport.clientWidth / nativeW, viewport.clientHeight / nativeH, 1));
     viewport.scrollLeft = 0;
     viewport.scrollTop = 0;
+    fittedRef.current = true;
   }
 
   useImperativeHandle(ref, () => ({
@@ -64,7 +87,7 @@ const FrameViewport = forwardRef(function FrameViewport({
   // default, or re-apply the current zoom to the (possibly new) dimensions.
   useEffect(() => {
     if (!nativeW) return;
-    if (scaleRef.current === 1 && !wantsNative) fitView(); else applyScale(scaleRef.current);
+    if (fittedRef.current || (scaleRef.current === 1 && !wantsNative)) fitView(); else applyScale(scaleRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nativeW, nativeH]);
 
@@ -81,6 +104,50 @@ const FrameViewport = forwardRef(function FrameViewport({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nativeW]);
 
+  // Re-fit when the window (and so the viewport) changes size.
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(() => { if (fittedRef.current && nativeW) fitView(); });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeW, nativeH]);
+
+  // Drag the image to pan. Left button, unless the pencil or move tool owns the drag;
+  // the middle button always pans.
+  function handlePanStart(e) {
+    if (!nativeW) return;
+    const middle = e.button === 1;
+    if (!middle && (e.button !== 0 || pencil || moveMode)) return;
+    e.preventDefault();
+    const viewport = viewportRef.current;
+    panRef.current = { x: e.clientX, y: e.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
+    movedRef.current = false;
+    setPanning(true);
+  }
+
+  useEffect(() => {
+    if (!panning) return undefined;
+    function onMove(e) {
+      const p = panRef.current, viewport = viewportRef.current;
+      if (!p || !viewport) return;
+      const dx = e.clientX - p.x, dy = e.clientY - p.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) movedRef.current = true;
+      viewport.scrollLeft = p.left - dx;
+      viewport.scrollTop = p.top - dy;
+    }
+    function onUp() { panRef.current = null; setPanning(false); }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, [panning]);
+
+  // A drag that moved is not a click: don't let it select the box it ended on.
+  function swallowClickAfterPan(e) {
+    if (movedRef.current) { e.stopPropagation(); e.preventDefault(); movedRef.current = false; }
+  }
+
   function handleImgLoad(e) {
     if (!nativeW) onNativeSizeDetected(e.target.naturalWidth, e.target.naturalHeight);
   }
@@ -91,13 +158,17 @@ const FrameViewport = forwardRef(function FrameViewport({
 
   return (
     <div className="review-viewport-wrap">
-      <div ref={viewportRef} className="review-viewport">
+      <div
+        ref={viewportRef}
+        className={`review-viewport${panning ? " is-panning" : ""}${pencil ? " is-pencil" : ""}${moveMode ? " is-move" : ""}`}
+        onMouseDown={handlePanStart} onClickCapture={swallowClickAfterPan}
+      >
         <div ref={stageRef} className="review-stage">
           {src && (
             <img ref={imgRef} src={src} draggable={false} alt="" onLoad={handleImgLoad} />
           )}
           <BoxOverlay
-            nativeW={nativeW} nativeH={nativeH}
+            nativeW={nativeW} nativeH={nativeH} trail={trail} currentIdx={frameIdx} pxScale={scale}
             frameBoxes={frameBoxes} manualBoxes={manualBoxesForFrame}
             selectedTrack={selectedTrack} selected={selected} followTrack={followTrack}
             pencil={pencil} moveMode={moveMode}

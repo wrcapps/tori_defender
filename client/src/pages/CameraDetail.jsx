@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useCameras } from "../hooks/useCameras.js";
 import { useAuth } from "../AuthContext.jsx";
 import { api } from "../api.js";
 import { deriveKind } from "../lib/grouping.js";
+import { formatWhen } from "../lib/format.js";
 import StatusPill from "../components/StatusPill.jsx";
 import "./CameraDetail.css";
 
@@ -20,6 +21,17 @@ export default function CameraDetail() {
   const { rows, error } = useCameras();
   const [busy, setBusy] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
+  const [activity, setActivity] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    function load() {
+      api.cameraActivity(site, name).then((data) => !cancelled && setActivity(data)).catch(() => {});
+    }
+    load();
+    const id = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [site, name]);
 
   if (rows === null && !error) {
     return <div className="state-page skeleton-block" style={{ height: 420 }} />;
@@ -84,6 +96,35 @@ export default function CameraDetail() {
               <div><dt>Detection</dt><dd>{camera.detecting ? "Running" : "Off"}</dd></div>
             )}
           </dl>
+
+          {activity && (
+            <div className="info-activity">
+              <span className="tick-label">Sightings here</span>
+              <p className="info-activity-summary">
+                {activity.confirmed_count} confirmed
+                {Object.keys(activity.species).length > 0 && (
+                  <> · {Object.entries(activity.species).map(([sp, n]) => `${sp} (${n})`).join(", ")}</>
+                )}
+              </p>
+
+              {/* Raw, unconfirmed model output -- labeled "detected", never
+                  "confirmed"/"sighting", so this can't be mistaken for the
+                  reviewed feed above it (see useDetectionEvents.js). */}
+              {activity.recent.length > 0 && (
+                <ul className="info-activity-list">
+                  {activity.recent.slice(0, 6).map((r) => (
+                    <li key={r.id}>
+                      <Link to={`/app/live/${encodeURIComponent(site)}/track/${encodeURIComponent(r.id)}`}>
+                        {formatWhen(r.day, r.window)} — detected, {Math.round(r.confidence * 100)}%
+                        {r.verdict === "keep" ? " · confirmed" : ""}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {role === "operator" && camera.running && !camera.detecting && camera.detection_note && (
             <div className="info-issue">
               <span className="tick-label">Why no detection</span>

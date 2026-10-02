@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../../api.js";
 import { useSiteNames } from "../../hooks/useSiteNames.js";
 import { useFolderPolling } from "../../hooks/useFolderPolling.js";
@@ -26,7 +27,15 @@ export default function Review() {
   const imgRef = useRef(null);
   const viewportRef = useRef(null);
   const statusTimer = useRef(null);
-  const fieldsRef = useRef({ species: "", distance: "", size: "" }); // live pencil-mode form values
+  const fieldsRef = useRef({ species: "", distance: "", size: "", risk: "" }); // live pencil-mode form values
+  const [riskPolicy, setRiskPolicy] = useState(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // A notification opens Review at one detection: ?site=&folder=<day/window>&file=&track=
+  const linkTarget = useRef(
+    searchParams.get("folder")
+      ? { site: searchParams.get("site"), folder: searchParams.get("folder"),
+          file: searchParams.get("file"), track: searchParams.get("track") }
+      : null);
 
   function setStatus(text) {
     setStatusText(text);
@@ -35,8 +44,29 @@ export default function Review() {
   }
 
   useEffect(() => {
-    if (sites && sites.length > 0 && !site) setSite(sites[0]);
+    if (sites && sites.length > 0 && !site) {
+      const wanted = linkTarget.current?.site;
+      setSite(wanted && sites.includes(wanted) ? wanted : sites[0]);
+    }
   }, [sites, site]);
+
+  // A notification clicked while Review is already open only changes the address; follow it.
+  useEffect(() => {
+    const folder = searchParams.get("folder");
+    if (!folder) return;
+    const link = { site: searchParams.get("site"), folder, file: searchParams.get("file"),
+                   track: searchParams.get("track") };
+    if (!site) { linkTarget.current = link; return; }      // first load: loadSite picks it up
+    if (link.site && link.site !== site) { linkTarget.current = link; setSite(link.site); return; }
+    setSearchParams({}, { replace: true });
+    openFolder(site, folder, link);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!site) return;
+    api.riskPolicy(site).then(setRiskPolicy).catch(() => setRiskPolicy(null));
+  }, [site]);
 
   // ---------------------------------------------------------------- site
   const loadSite = useCallback(async (name) => {
@@ -50,7 +80,14 @@ export default function Review() {
       const data = await api.folders(name);
       dispatch({ type: "FOLDERS_LOADED", folders: data.folders || [], species: data.species || [] });
       const first = (data.folders || []).find((f) => !f.reviewed) || (data.folders || [])[0];
-      if (first) openFolder(name, first.id);
+      const link = linkTarget.current;
+      if (link && link.site === name && (data.folders || []).some((f) => f.id === link.folder)) {
+        linkTarget.current = null;
+        setSearchParams({}, { replace: true }); // the address bar goes back to plain /review
+        openFolder(name, link.folder, link);
+      } else if (first) {
+        openFolder(name, first.id);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "network-error");
     }
@@ -75,7 +112,7 @@ export default function Review() {
   }, [site, state.folder]);
 
   // ---------------------------------------------------------------- folder
-  async function openFolder(forSite, id) {
+  async function openFolder(forSite, id, link) {
     const gen = ++generationRef.current;
     let opened;
     try {
@@ -85,7 +122,11 @@ export default function Review() {
     }
     if (gen !== generationRef.current) return;
     dispatch({ type: "FOLDER_OPENED", folder: opened });
-    showFrame(forSite, opened, 0, false);
+    const at = link?.file ? opened.frames.findIndex((f) => f.file === link.file) : 0;
+    await showFrame(forSite, opened, Math.max(0, at), false);
+    if (link?.track != null && link.track !== "" && gen === generationRef.current) {
+      dispatch({ type: "TRACK_SELECTED", track: Number(link.track) });
+    }
   }
 
   async function showFrame(forSite, folder, index, keepSelection) {
@@ -271,13 +312,25 @@ export default function Review() {
   }
 
   // ------------------------------------------------------------ follow
+  // What a followed bird carries from frame to frame: the notes on the box it started from.
+  function followMetaOf(sel) {
+    const src = sel.kind === "model"
+      ? (state.trackMeta[trackId(state.folder.day, state.folder.window, sel.model.track)] || {})
+      : sel.manual;
+    return { species: src.species || "", distance: src.distance ?? "", size: src.size || "",
+             risk: src.risk || "" };
+  }
+
   async function startFollow() {
     const sel = selectedBox();
     if (!sel) { setStatus("select a box first, then follow it"); return; }
     try {
       const res = await api.startManualTrack(site);
-      dispatch({ type: "FOLLOW_STARTED", track: res.track, bbox: sel.bbox.slice() });
-      setStatus(`following as ${res.track} — step frames with →, X when it leaves the scene`);
+      const meta = followMetaOf(sel);
+      dispatch({ type: "FOLLOW_STARTED", track: res.track, bbox: sel.bbox.slice(), meta });
+      const carried = [meta.species, meta.distance !== "" && `${meta.distance} m`, meta.size, meta.risk && `${meta.risk} risk`]
+        .filter(Boolean).join(", ");
+      setStatus(`following as ${res.track}${carried ? ` (carrying ${carried})` : ""} — step frames with →, X when it leaves the scene`);
     } catch {
       setStatus("could not start a track");
     }
@@ -307,7 +360,7 @@ export default function Review() {
     const bbox = predictNext(state.follow.history, state.nativeW, state.nativeH);
     try {
       const row = await api.addManualBox(site, state.folder.day, state.folder.window, currentFrame.file,
-                                          bbox, { ...fieldsRef.current, track: state.follow.track });
+                                          bbox, { ...state.follow.meta, track: state.follow.track });
       dispatch({ type: "MANUAL_BOX_ADDED", row });
       dispatch({ type: "FOLLOW_HISTORY_PUSHED", bbox });
     } catch {
@@ -374,6 +427,29 @@ export default function Review() {
   const metaId = state.pencil ? null : verdictId;
   const disabledForm = !verdictId && !state.pencil;
   const selectedNow = selectedBox();
+
+  // The trail behind the selected bird: every fix of its track in this session, as
+  // [frameIndex, cx, cy]. Model tracks come linked from the server (folder.paths);
+  // hand-followed ones are rebuilt from their boxes.
+  function trailFor() {
+    if (!state.folder) return null;
+    if (state.selected?.kind === "model") {
+      const pts = state.folder.paths?.[String(state.selected.track)];
+      return pts && pts.length >= 2 ? pts : null;
+    }
+    const m = selectedNow?.manual;
+    if (m?.track) {
+      const index = new Map(state.folder.frames.map((f, i) => [f.file, i]));
+      const pts = state.manualBoxes
+        .filter((b) => b.track === m.track && b.day === state.folder.day &&
+                       b.window === state.folder.window && index.has(b.file))
+        .map((b) => [index.get(b.file), (b.bbox[0] + b.bbox[2]) / 2, (b.bbox[1] + b.bbox[3]) / 2])
+        .sort((a, b) => a[0] - b[0]);
+      return pts.length >= 2 ? pts : null;
+    }
+    return null;
+  }
+  const trail = trailFor();
   const magnifierPoint = state.pencil
     ? hoverPreview?.point || null
     : (box ? { cx: (box.bbox[0] + box.bbox[2]) / 2, cy: (box.bbox[1] + box.bbox[3]) / 2 } : null);
@@ -429,6 +505,7 @@ export default function Review() {
             onPencilPreview={setHoverPreview}
             onNativeSizeDetected={(w, h) => dispatch({ type: "NATIVE_SIZE_DETECTED", width: w, height: h })}
             onZoomChange={setZoomPct}
+            trail={trail}
           />
         </div>
 
@@ -459,7 +536,7 @@ export default function Review() {
           <AnnotationForm
             key={state.pencil ? "pencil" : (metaId ?? "none")}
             id={metaId} pencil={state.pencil} meta={metaId ? state.trackMeta[metaId] : null}
-            speciesSeen={state.speciesSeen} disabled={disabledForm}
+            speciesSeen={state.speciesSeen} disabled={disabledForm} riskPolicy={riskPolicy}
             onSave={saveMeta} onFieldsChange={(values) => { fieldsRef.current = values; }}
           />
 
