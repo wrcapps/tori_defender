@@ -47,10 +47,11 @@ export function DataFolderSection({ state, value, onChange }) {
   const win = state.platform === "windows";
   return (
     <section className="set-section" aria-labelledby="set-data">
-      <h2 id="set-data" className="set-title">Data folder (NAS)</h2>
+      <h2 id="set-data" className="set-title">Data folder (NAS archive)</h2>
       <p className="set-help">
-        Where captured footage, detections and your review decisions are read from and saved to.
-        Point this at the NAS share{win ? " (a mapped drive such as Z:\\Dataset, or a \\\\server\\share\\Dataset path)" : " once it is mounted"}. Leave empty for the app's own folder.
+        Where confirmed footage and older negative frames are kept for good. The app captures and reviews on this
+        computer's own disk and moves finished data here in the background, so a slow or unreachable NAS never holds it up.
+        Point this at the NAS share{win ? " (a mapped drive such as Z:\\Dataset, or a \\\\server\\share\\Dataset path)" : " once it is mounted"}. Leave empty to keep everything on this computer.
       </p>
       <label className="set-field">
         <span className="visually-hidden">Data folder path</span>
@@ -77,16 +78,16 @@ export function DataFolderSection({ state, value, onChange }) {
             {result.warnings.map((w) => <span key={w} className="set-note warn" role="alert">{w}</span>)}
           </>
         )}
-        {!value.trim() && <span className="set-note">Currently using <code>{info.active}</code> ({info.source}).</span>}
+        {!value.trim() && <span className="set-note">{info.active ? <>Currently archiving to <code>{info.active}</code> ({info.source}).</> : "Currently keeping everything on this computer."}</span>}
       </div>
       {info.overridden && (
         <p className="set-note warn" role="status">
-          The app was started with an explicit <code>--sites-root</code>, which takes priority over this setting.
+          The app was started with an explicit <code>--archive-root</code>, which takes priority over this setting.
         </p>
       )}
       {info.restart_needed && (
         <p className="set-note warn" role="status">
-          Saved, but the app is still using <code>{info.active}</code> — restart it to switch.
+          Saved, but the app is still using {info.active ? <code>{info.active}</code> : "no archive"} — restart it to switch.
         </p>
       )}
     </section>

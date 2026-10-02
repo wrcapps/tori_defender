@@ -74,6 +74,7 @@ import socketserver
 import struct
 import sys
 import threading
+import subprocess
 import time
 from collections import Counter, defaultdict
 from datetime import date, datetime
@@ -96,8 +97,8 @@ from model_infer import fit_width, save_crop, write_jpeg
 from risk import LEVELS, RiskPolicy, alert_message, decision_for
 from settings import (DEFAULT_MODELS_DIR, DEFAULT_SETTINGS_PATH, SettingsStore, check_data_dir,
                       detect_devices, device_flag, discover_models, resolve_model)
+import archive
 import captured
-from datastore import choose_root, storage_status
 from sitepaths import DEFAULT_SITES_ROOT, add_sites_root_argument, site_dir, site_root
 
 HERE = Path(__file__).resolve().parent
@@ -1068,6 +1069,10 @@ def folder_frames(frames_root: Path, day: str, window: str) -> list[str]:
                   key=natural_key)
 
 
+ARCHIVE_LIST_TTL_S = 15.0
+ARCHIVE_INTERVAL_S = 60.0       # how often archive.py looks for finished data to move
+
+
 class Site:
     """Everything scoped to one config: its cameras, its data tree, its stores.
 
@@ -1077,7 +1082,8 @@ class Site:
     """
 
     def __init__(self, config_path: str, model_bucket: str, sites_root: Path | None,
-                 dir_override: Path | None, frames_root_override: Path | None):
+                 dir_override: Path | None, frames_root_override: Path | None,
+                 archive_root: Path | None = None):
         self.config_path = config_path
         self.cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
         self.name = self.cfg.get("site", "site")
@@ -1103,14 +1109,21 @@ class Site:
         self.out.mkdir(parents=True, exist_ok=True)
         # Confirmed windows live in frames/, pending ones in inbox/ (docs/DATA_LAYOUT.md). An explicit
         # --frames-root reviews some other tree as-is: no inbox, no lifecycle.
-        self.layout = None if (frames_root_override or dir_override) else SiteLayout(site_root(self.cfg, sites_root, config_path))
+        self.layout = None if (frames_root_override or dir_override) else SiteLayout(
+            site_root(self.cfg, sites_root, config_path),
+            archive=(archive_root / self.name) if archive_root else None)
+        self._archive_rows: list[dict] | None = None      # the archive's session list, refreshed in the background
+        self._archive_rows_at = 0.0
+        self._archive_refreshing = threading.Lock()
         if self.layout:
             self.layout.ensure()
             self.frames_root = self.layout.frames
-            self.folder_roots = [(self.layout.inbox, "pending"), (self.layout.frames, "confirmed")]
+            self.local_roots = [(self.layout.inbox, "pending"), (self.layout.frames, "confirmed")]
+            self.folder_roots = self.local_roots + (
+                [(self.layout.archive_frames, "confirmed")] if self.layout.archive_frames else [])
         else:
             self.frames_root = frames_root_override
-            self.folder_roots = [(frames_root_override, "confirmed")]
+            self.local_roots = self.folder_roots = [(frames_root_override, "confirmed")]
         self.retention = Retention.from_cfg(self.cfg)
         self.lifecycle_lock = threading.RLock()     # one decision/move/purge pass at a time per site
         self.live_root = site_dir(self.cfg, "live", base=sites_root, source=config_path)
@@ -1138,19 +1151,45 @@ class Site:
         self.box_edits = BoxEditStore(self.out / "box_edits.jsonl")
         self.frame_sizes = FrameSizeCache()
 
+    def list_folders(self) -> list[dict]:
+        """Every session: the local ones fresh, the archive's from a list refreshed in the background
+        (walking the NAS costs ~5 ms per window; a Review poll must not wait for that)."""
+        rows = list_folders(self.local_roots)
+        if self.layout is not None and self.layout.archive_frames:
+            if self._archive_rows is None:
+                self._refresh_archive_rows()                       # the first call has nothing to show yet
+            elif time.monotonic() - self._archive_rows_at > ARCHIVE_LIST_TTL_S:
+                threading.Thread(target=self._refresh_archive_rows, daemon=True).start()
+            have = {r["id"] for r in rows}
+            rows += [r for r in (self._archive_rows or []) if r["id"] not in have]
+            rows.sort(key=lambda f: (f["day"], f["window"]), reverse=True)
+        return rows
+
+    def _refresh_archive_rows(self) -> None:
+        if not self._archive_refreshing.acquire(blocking=False):
+            return
+        try:
+            self._archive_rows = list_folders([(self.layout.archive_frames, "confirmed")])
+        except OSError:
+            self._archive_rows = self._archive_rows or []          # NAS down: show what we last saw
+        finally:
+            self._archive_rows_at = time.monotonic()
+            self._archive_refreshing.release()
+
     def window_root(self, day: str, window: str) -> Path:
-        """The root that holds <day>/<window> right now (inbox, else confirmed)."""
+        """The root that holds <day>/<window> right now (inbox, confirmed, else the archive)."""
         for root, _ in self.folder_roots:
             if (root / day / window).is_dir():
                 return root
         return self.frames_root
 
-    def reconcile(self, by: str = "system") -> list[dict]:
-        """Apply the lifecycle rules (confirm / reject / expire / purge). No-op without a layout."""
+    def reconcile(self, by: str = "system", only: str | None = None) -> list[dict]:
+        """Apply the lifecycle rules (confirm / reject / expire / purge). No-op without a layout.
+        `only` ("day/window") limits the check of confirmed windows to the one just decided."""
         if self.layout is None:
             return []
         with self.lifecycle_lock:
-            done = lifecycle.reconcile(self.layout, self.retention, self.out, by=by)
+            done = lifecycle.reconcile(self.layout, self.retention, self.out, by=by, only=only)
             done += lifecycle.purge(self.layout, self.out)
         if done:
             self.store.refresh()
@@ -1207,8 +1246,8 @@ def make_handler(sites: dict[str, Site], camera_site: dict[str, Site], default_s
             "effective_model": dict(effective, source=source) if effective else None,
             "config_model": config_weights,
             "data_dir": {"active": active_dir, "source": source_dir,
-                         "restart_needed": bool(wanted_dir) and source_dir != "command line"
-                                           and Path(wanted_dir).resolve() != Path(active_dir).resolve(),
+                         "restart_needed": source_dir != "command line"
+                                           and (wanted_dir or None) != (active_dir or None),
                          "overridden": bool(wanted_dir) and source_dir == "command line"},
             "sites": list(sites),
             "platform": "windows" if os.name == "nt" else "linux",
@@ -1370,12 +1409,14 @@ def make_handler(sites: dict[str, Site], camera_site: dict[str, Site], default_s
             if site is None or site.layout is None:
                 self._send(404, b"unknown site", "text/plain")
                 return
-            source = self._under(site.layout.negatives, rel)
-            if source is None or not source.is_file():
+            day, _, name = rel.partition("/")
+            found = site.layout.negative_file(day, name) if safe_folder(day, name.rsplit(".", 1)[0]) else None
+            if found is None:
                 self._send(404, b"not found", "text/plain")
                 return
+            source = found
             if not thumb:
-                self._serve_file(site.layout.negatives, rel)
+                self._send(200, found.read_bytes(), "image/jpeg")
                 return
             cached = site.out / "proxies" / "negatives" / Path(rel)
             if not cached.is_file() or cached.stat().st_mtime < source.stat().st_mtime:
@@ -1732,7 +1773,7 @@ def make_handler(sites: dict[str, Site], camera_site: dict[str, Site], default_s
                     return
                 site.store.refresh()
                 status = site.folder_status.snapshot()
-                folders = list_folders(site.folder_roots)
+                folders = site.list_folders()
                 verdict_map = site.verdicts.snapshot()
                 for f in folders:
                     boxes = site.store.folder_boxes(f["id"])
@@ -1853,6 +1894,45 @@ def make_handler(sites: dict[str, Site], camera_site: dict[str, Site], default_s
                 self._json(200, recent_detections(sites))
             elif path == "/api/acquisition":
                 self._json(200, manager.acquisition_status())
+            elif path.startswith("/api/captured/"):
+                # Operator-only: it lists and (via POST) deletes footage.
+                if session["role"] != "operator":
+                    self._json(403, {"error": "operator role required"})
+                elif site is None or site.layout is None:
+                    self._json(404, {"error": f"unknown site {query.get('site')!r}"})
+                elif path == "/api/captured/summary":
+                    self._json(200, captured.summary(site.layout))
+                elif path == "/api/captured/items":
+                    group = query.get("group", ["unreviewed"])[0]
+                    if group not in captured.GROUPS:
+                        self._json(400, {"error": f"group must be one of {', '.join(captured.GROUPS)}"})
+                        return
+                    rows = captured.items(site.layout, group)
+                    offset = max(0, int(query.get("offset", ["0"])[0] or 0))
+                    limit = min(200, max(1, int(query.get("limit", ["48"])[0] or 48)))
+                    page = rows[offset:offset + limit]
+                    for row in page:
+                        if row["kind"] == "negative":
+                            row["thumb"] = f"/negthumb/{quote(site.name)}/{row['day']}/{row['file']}"
+                        else:
+                            n = max(0, int(row["frames"] or 1) // 2)
+                            row["thumb"] = f"/proxy/{quote(site.name)}/{row['day']}/{row['window']}/frame_{n}.jpg"
+                    self._json(200, {"total": len(rows), "items": page})
+                else:
+                    self._json(404, {"error": "not found"})
+            elif path.startswith("/negthumb/") or path.startswith("/negative/"):
+                self._serve_negative(path)
+            elif path == "/api/storage":
+                # Any signed-in user: the banner is for whoever is looking at the screen. Reads the mover's
+                # status file only; the request never touches the NAS.
+                rt = runtime or {}
+                if not rt.get("archive_dir"):
+                    self._json(200, {"state": "local"})
+                else:
+                    st = archive.read_status(rt.get("archive_status"))
+                    fresh = st and time.time() - st.get("last_cycle", 0) < 4 * rt.get("archive_interval", 60)
+                    self._json(200, dict(st, archive=rt["archive_dir"]) if fresh
+                               else {"state": "unknown", "archive": rt["archive_dir"]})
             elif path.startswith("/api/captured/"):
                 # Operator-only: it lists and (via POST) deletes footage.
                 if session["role"] != "operator":
@@ -2127,7 +2207,7 @@ def make_handler(sites: dict[str, Site], camera_site: dict[str, Site], default_s
                         log_event(site.out, event="review", day=day, window=window, track=track_id,
                                   decision=decision, reason=str(payload.get("reason") or "")[:80],
                                   note=str(payload.get("note") or "")[:500], by=who)
-                    moved = [a for a in site.reconcile(by=who) if a.get("day") == day and a.get("window") == window]
+                    moved = [a for a in site.reconcile(by=who, only=f"{day}/{window}") if a.get("day") == day and a.get("window") == window]
                 self._json(200, {"ok": True, "verdict": decision, "moved": moved,
                                  "lifecycle": window_lifecycle(site, day, window)})
 
@@ -2260,7 +2340,7 @@ def make_handler(sites: dict[str, Site], camera_site: dict[str, Site], default_s
                 # A window still being written cannot be "done": its remaining
                 # frames have not been looked at yet, by definition.
                 if reviewed:
-                    current = next((f for f in list_folders(site.folder_roots)
+                    current = next((f for f in site.list_folders()
                                     if f["id"] == folder_id), None)
                     if current and current["recording"]:
                         self._json(409, {"error": "this session is still recording"})
@@ -2322,26 +2402,23 @@ def main(argv: list[str] | None = None, on_ready=None) -> int:
                     help=f"where model files (.pt YOLO, .pth RF-DETR) are picked from "
                          f"(default: {DEFAULT_MODELS_DIR})")
     add_sites_root_argument(ap)
+    ap.add_argument("--archive-root", type=Path, default=None,
+                    help="the NAS folder (holding <site>/ trees) finished data is moved to; overrides the "
+                         "data folder chosen in Settings")
     args = ap.parse_args(argv)
 
     settings = SettingsStore(args.settings, args.models_dir)
     chosen = settings.get()
     # --sites-root on the command line wins; otherwise the folder picked in Settings; otherwise
     # the default. Resolved here, once: every Site and the acquisition service are built from it.
-    if args.sites_root:
-        data_dir_source = "command line"
+    # --sites-root (default <app>/sites) is the LOCAL tree capture and review work on. The data folder from
+    # Settings, or --archive-root, is the ARCHIVE (the NAS): archive.py moves finished data there.
+    if args.archive_root:
+        archive_dir, data_dir_source = args.archive_root, "command line"
     elif chosen["data_dir"]:
-        args.sites_root, data_dir_source = Path(chosen["data_dir"]), "settings"
+        archive_dir, data_dir_source = Path(chosen["data_dir"]), "settings"
     else:
-        data_dir_source = "default"
-    primary_dir = args.sites_root          # what the user chose; may differ from the root used this run
-    if data_dir_source == "settings":
-        # The picked folder is normally the NAS. If it is down, run on a temporary local folder; the
-        # next start with it back moves that data over first (backend/datastore.py).
-        args.sites_root, data_dir_source = choose_root(args.sites_root)
-    elif args.sites_root and not args.sites_root.is_dir():
-        print(f"data folder {args.sites_root} ({data_dir_source}) does not exist -- is the NAS "
-              f"mounted? Fix it in Settings or mount it, then restart.", file=sys.stderr)
+        archive_dir, data_dir_source = None, "default"
 
     if len(args.config) > 1 and (args.dir or args.frames_root):
         print("--dir/--frames-root only make sense with a single --config; ignoring them",
@@ -2350,7 +2427,7 @@ def main(argv: list[str] | None = None, on_ready=None) -> int:
 
     sites: dict[str, Site] = {}
     for config_path in args.config:
-        site = Site(config_path, args.model, args.sites_root, args.dir, args.frames_root)
+        site = Site(config_path, args.model, args.sites_root, args.dir, args.frames_root, archive_dir)
         if site.name in sites:
             raise SystemExit(f"two configs both name site {site.name!r} "
                              f"({sites[site.name].config_path} and {config_path}) -- "
@@ -2392,6 +2469,26 @@ def main(argv: list[str] | None = None, on_ready=None) -> int:
         for camera in site.cameras:
             manager.register(site, camera)
     manager.start()
+    mover = None
+    archive_status = args.capture_logs / "archive" / "status.json"
+    if archive_dir:
+        archive_status.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [sys.executable, str(Path(__file__).resolve().parent / "archive.py"), "--archive-root", str(archive_dir),
+               "--status", str(archive_status), "--interval", str(ARCHIVE_INTERVAL_S), "--stop-on-stdin-eof"]
+        for config_path in args.config:
+            cmd += ["--config", str(config_path)]
+        if args.sites_root:
+            cmd += ["--sites-root", str(args.sites_root)]
+        if getattr(sys, "frozen", False):
+            # No interpreter to hand a script to in the packaged exe: the same loop runs as a thread.
+            threading.Thread(target=archive.main, daemon=True, name="archive",
+                             args=([a for a in cmd[2:] if a != "--stop-on-stdin-eof"],)).start()
+            print(f"archive: finished data moves to {archive_dir} in the background")
+        else:
+            mover = subprocess.Popen(cmd, stdin=subprocess.PIPE, cwd=ROOT,
+                                     stdout=open(args.capture_logs / "archive" / "archive.log", "ab"),
+                                     stderr=subprocess.STDOUT)
+            print(f"archive: finished data moves to {archive_dir} in the background (pid {mover.pid})")
 
     dataset = None
     if args.dataset:
@@ -2408,8 +2505,9 @@ def main(argv: list[str] | None = None, on_ready=None) -> int:
         print(f"note: {CLIENT_DIST} not built yet -- /login and /app will 503 until "
               f"`npm install && npm run build` has been run in {CLIENT_DIST.parent}")
 
-    runtime = {"data_dir": str(args.sites_root or DEFAULT_SITES_ROOT), "data_dir_source": data_dir_source,
-               "primary_dir": str(primary_dir) if primary_dir and data_dir_source != "command line" else None,
+    runtime = {"data_dir": str(archive_dir) if archive_dir else None, "data_dir_source": data_dir_source,
+               "archive_dir": str(archive_dir) if archive_dir else None, "archive_status": archive_status,
+               "archive_interval": ARCHIVE_INTERVAL_S,
                "config_weights": next((w for w in weights_by_site.values() if w), None)}
     handler = make_handler(sites, camera_site, default_site, manager,
                            args.proxy_width, args.fps_cap, dataset, users, sessions,
@@ -2437,7 +2535,7 @@ def main(argv: list[str] | None = None, on_ready=None) -> int:
         signal.signal(signal.SIGTERM, on_term)
 
     for site in sites.values():
-        print(f"site {site.name}: {len(list_folders(site.folder_roots))} capture "
+        print(f"site {site.name}: {len(site.list_folders())} capture "
               f"session(s), {len(site.cameras)} camera(s) "
               f"({', '.join(c.name for c in site.cameras) or 'none'})")
         print(f"  writes -> {site.out}")
@@ -2475,6 +2573,12 @@ def main(argv: list[str] | None = None, on_ready=None) -> int:
         print("\nstopping capture processes this app started...")
     finally:
         manager.shutdown()   # also when the desktop launcher calls httpd.shutdown()
+        if mover is not None:
+            mover.stdin.close()                       # it exits when its stdin closes
+            try:
+                mover.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                mover.terminate()
     print("stopped.")
     return 0
 

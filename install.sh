@@ -111,5 +111,5 @@ echo
 echo "=== done ==="
 echo "Start the reviewer with:"
 echo "  source .venv/bin/activate"
-echo "  ./backend/app.py --config config.yaml --sites-root ${SITES_ROOT}"
+echo "  ./backend/app.py --config config.yaml --archive-root ${SITES_ROOT}"
 echo "then open http://127.0.0.1:8766/ (forward the port if this is a remote machine)."

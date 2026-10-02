@@ -46,6 +46,24 @@ def negative_path(layout: SiteLayout, camera: str, now: datetime) -> Path:
 
 
 # ------------------------------------------------------------------------------ listing
+ARCHIVE_CACHE_TTL_S = 60.0
+_archive_cache: dict = {}
+
+
+def _cached_archive(key, build):
+    """The archive is walked at ~5 ms per window, so its listing is remembered for a minute."""
+    hit = _archive_cache.get(key)
+    if hit and time.monotonic() - hit[0] < ARCHIVE_CACHE_TTL_S:
+        return hit[1]
+    value = build()
+    _archive_cache[key] = (time.monotonic(), value)
+    return value
+
+
+def forget_archive() -> None:
+    _archive_cache.clear()
+
+
 def _windows(layout: SiteLayout):
     """(day, window, path, state) for every window the Dataset page may show."""
     for root, state in ((layout.inbox, "pending"), (layout.frames, "confirmed")):
@@ -55,6 +73,14 @@ def _windows(layout: SiteLayout):
             if state == "pending" and not lifecycle.is_closed(path):
                 continue                                   # capture is still writing it
             yield day, window, path, state
+    if layout.archive_frames is not None:
+        def walk():
+            try:
+                return [(d, w, p, "confirmed") for d, w, p in layout.iter_windows(layout.archive_frames)
+                        if not lifecycle._is_import(p)]
+            except OSError:
+                return []                                  # NAS down: the archive is simply not listed
+        yield from _cached_archive(("w", str(layout.archive_frames)), walk)
 
 
 def _meta(path: Path) -> dict:
@@ -84,16 +110,26 @@ def window_items(layout: SiteLayout, group: str) -> list[dict]:
     return sorted(out, key=lambda i: (i["day"], i["window"]), reverse=True)
 
 
+def _negative_files(layout: SiteLayout) -> list[Path]:
+    files = list(layout.negatives.glob("*/*.jpg")) if layout.negatives.is_dir() else []
+    if layout.archive_negatives is not None:
+        def walk():
+            try:
+                return list(layout.archive_negatives.glob("*/*.jpg"))
+            except OSError:
+                return []
+        files += _cached_archive(("n", str(layout.archive_negatives)), walk)
+    return files
+
+
 def negative_items(layout: SiteLayout) -> list[dict]:
     out = []
-    if layout.negatives.is_dir():
-        for day_dir in sorted((p for p in layout.negatives.iterdir() if p.is_dir()), reverse=True):
-            for img in sorted(day_dir.glob("*.jpg"), reverse=True):
-                m = NEGATIVE_NAME.match(img.name)
-                out.append({"id": f"{day_dir.name}/{img.name}", "kind": "negative", "day": day_dir.name,
-                            "file": img.name, "camera": m["camera"] if m else "?",
-                            "time": f"{m['hms'][:2]}:{m['hms'][2:4]}:{m['hms'][4:]}" if m else ""})
-    return out
+    for img in _negative_files(layout):
+        m = NEGATIVE_NAME.match(img.name)
+        out.append({"id": f"{img.parent.name}/{img.name}", "kind": "negative", "day": img.parent.name,
+                    "file": img.name, "camera": m["camera"] if m else "?",
+                    "time": f"{m['hms'][:2]}:{m['hms'][2:4]}:{m['hms'][4:]}" if m else ""})
+    return sorted(out, key=lambda i: (i["day"], i["file"]), reverse=True)
 
 
 def items(layout: SiteLayout, group: str) -> list[dict]:
@@ -109,7 +145,7 @@ def summary(layout: SiteLayout) -> dict:
     facts = lifecycle.load_facts(layout)
     for day, window, _path, _state in _windows(layout):
         groups[_window_group(facts.get(f"{day}/{window}", lifecycle.WindowFacts()))] += 1
-    groups["no_detections"] = sum(1 for _ in layout.negatives.glob("*/*.jpg")) if layout.negatives.is_dir() else 0
+    groups["no_detections"] = len(_negative_files(layout))
     return {"groups": groups}
 
 
@@ -136,6 +172,8 @@ def delete_windows(layout: SiteLayout, ids: list[str], log_bucket: Path, by: str
             pass
         log_event(log_bucket, day=day, window=window, to="deleted", reason="dataset", by=by)
         deleted.append(wid)
+    if deleted:
+        forget_archive()
     return {"deleted": deleted, "skipped": skipped}
 
 
@@ -143,8 +181,7 @@ def _negative_file(layout: SiteLayout, nid: str) -> Path | None:
     day, _, name = str(nid).partition("/")
     if not (SAFE.match(day) and SAFE.match(name)) or not NEGATIVE_NAME.match(name):
         return None
-    path = layout.negatives / day / name
-    return path if path.is_file() else None
+    return layout.negative_file(day, name)
 
 
 def delete_negatives(layout: SiteLayout, ids: list[str]) -> dict:
@@ -160,6 +197,8 @@ def delete_negatives(layout: SiteLayout, ids: list[str]) -> dict:
         except OSError:
             pass
         deleted.append(nid)
+    if deleted:
+        forget_archive()
     return {"deleted": deleted, "skipped": skipped}
 
 
@@ -173,7 +212,12 @@ def negative_to_review(layout: SiteLayout, nid: str, log_bucket: Path, by: str) 
     name = layout.unique_window(day, src.stem)
     dest = layout.inbox / day / name
     dest.mkdir(parents=True)
-    os.replace(src, dest / "frame_0.jpg")
+    if layout.archive_negatives is not None and layout.archive_negatives in src.parents:
+        shutil.copyfile(src, dest / "frame_0.jpg")         # from the NAS: a copy, never a rename across
+        src.unlink()
+        forget_archive()
+    else:
+        os.replace(src, dest / "frame_0.jpg")
     now = time.time()
     (dest / "window.json").write_text(json.dumps({
         "camera": camera, "frames": 1, "opened_at": now, "closed_at": now, "from_negative": True}, indent=1),

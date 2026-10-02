@@ -50,8 +50,15 @@ class Retention:
 
 
 class SiteLayout:
-    def __init__(self, site_root: Path):
+    """`site_root` is the local, hot tree: capture and review read and write only here. `archive` (optional) is
+    this site's folder on slow storage (the NAS): confirmed windows and old negatives are moved there by
+    archive.py and are still found, read-only in effect, by window_dir() and the negatives lookups."""
+
+    def __init__(self, site_root: Path, archive: Path | None = None):
         self.root = Path(site_root)
+        self.archive = Path(archive) if archive else None
+        self.archive_frames = self.archive / FRAMES if self.archive else None
+        self.archive_negatives = self.archive / NEGATIVES if self.archive else None
         self.live = self.root / LIVE
         self.inbox = self.root / INBOX
         self.frames = self.root / FRAMES
@@ -64,12 +71,28 @@ class SiteLayout:
             p.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------- windows
-    def window_dir(self, day: str, window: str) -> Path | None:
-        """Where this window is right now (inbox, then confirmed), or None."""
-        for root in (self.inbox, self.frames):
+    def confirmed_roots(self) -> list[Path]:
+        """Where confirmed windows live: local frames/, then the archive's."""
+        return [self.frames] + ([self.archive_frames] if self.archive_frames else [])
+
+    def window_dir(self, day: str, window: str, archive: bool = True) -> Path | None:
+        """Where this window is right now (inbox, confirmed, then the archive), or None.
+        archive=False skips the slow storage: for callers that only need to know about local state."""
+        roots = (self.inbox, self.frames) + ((self.archive_frames,) if archive and self.archive_frames else ())
+        for root in roots:
             candidate = root / day / window
             if candidate.is_dir():
                 return candidate
+        return None
+
+    def is_archived(self, path: Path) -> bool:
+        return bool(self.archive_frames) and self.archive_frames in path.parents
+
+    def negative_file(self, day: str, name: str) -> Path | None:
+        """A saved negative, local first, then archived."""
+        for root in (self.negatives, self.archive_negatives):
+            if root is not None and (root / day / name).is_file():
+                return root / day / name
         return None
 
     def root_of(self, day: str, window: str) -> Path | None:
@@ -80,7 +103,7 @@ class SiteLayout:
         found = self.window_dir(day, window)
         if found is None:
             return "trashed" if self.trashed_dir(day, window) else None
-        return "pending" if found.parent.parent == self.inbox else "confirmed"
+        return "pending" if found.parent.parent == self.inbox else "confirmed"   # frames/ or archived
 
     def trashed_dir(self, day: str, window: str) -> Path | None:
         if not self.trash.is_dir():
@@ -107,13 +130,13 @@ class SiteLayout:
         if not root.is_dir():
             return
         for day_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-            for win in sorted(p for p in day_dir.iterdir() if p.is_dir()):
+            for win in sorted(p for p in day_dir.iterdir() if p.is_dir() and not p.name.startswith(".")):
                 yield day_dir.name, win.name, win
 
     # ---------------------------------------------------------------- moves
     def move(self, day: str, window: str, dest_root: Path, purge_date: str | None = None) -> Path:
         """Rename a window into `dest_root` (inbox/frames, or trash/<purge-date>). One rename, nothing else."""
-        src = self.window_dir(day, window)
+        src = self.window_dir(day, window, archive=False)      # a rename never crosses to the archive
         if src is None:
             raise FileNotFoundError(f"{day}/{window} is not in inbox or frames")
         dest = (dest_root / purge_date if purge_date else dest_root) / day / window
@@ -202,6 +225,6 @@ def gone_windows(layout: SiteLayout) -> set[str]:
         for wid, to in _latest_states(bucket).items():
             if to in ("trash", "purged"):
                 day, _, window = wid.partition("/")
-                if layout.window_dir(day, window) is None:
+                if layout.window_dir(day, window, archive=False) is None:
                     gone.add(wid)
     return gone

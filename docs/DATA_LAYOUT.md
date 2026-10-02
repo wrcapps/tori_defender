@@ -12,6 +12,24 @@ python backend/lifecycle.py sweep   --sites-root sites --site <site>    # dry ru
 python backend/lifecycle.py restore --sites-root sites --site <site> DAY WINDOW
 ```
 
+## 0. Hot and archive
+
+`sites/<site>/` next to the app is the **local, hot** tree: capture writes there and Review reads there, so
+neither waits for the NAS (measured on this setup: 75 ms to read a 1.8 MB frame, 91 ms to write one, ~22 MB/s;
+twelve cameras need about four times that). The data folder chosen in Settings (`data_dir`, or `--archive-root`) is
+the **archive** (the NAS), laid out the same way: `<archive>/<site>/frames/...`. `backend/archive.py`, a
+separate process the app starts, moves finished data there whenever the NAS answers:
+
+| what | when | how |
+|---|---|---|
+| `frames/<day>/<window>` (confirmed) | as soon as it is confirmed | copy to a temporary name, rename on the NAS, compare file names and sizes, then remove the local copy |
+| `negatives/<day>/<file>` | older than 24 h | the same, per file |
+| records (`*.json`, `*.jsonl`, `*.csv` of each bucket) | when changed | **backup** copy; the records stay local |
+
+A window is found wherever it is (`SiteLayout.window_dir`: inbox, local frames, archive), so nothing else needs to
+know. Rejecting an archived window deletes it on the NAS, in place. If the NAS is down, nothing stops: data waits
+locally and the header shows `NAS down` with how much is waiting. Crops and proxies stay local.
+
 ## 1. The tree
 
 ```

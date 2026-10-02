@@ -1,15 +1,19 @@
 import React from "react";
 import "./StorageNotice.css";
 
-// NAS pill in the header + a banner when something needs the operator's attention.
+// NAS pill in the header, and a banner when it is unreachable. The app itself never depends on the NAS:
+// capture and review use the local disk, and a background process moves finished data over (archive.py).
 // Nothing is rendered when no NAS folder was chosen ("local") or before the first answer.
 export function StoragePill({ storage }) {
   if (storage.loading || storage.state === "local") return null;
-  if (storage.unknown) {
-    return <span className="storage-pill tone-faint" title="Storage status unavailable">NAS ?</span>;
+  if (storage.unknown || storage.state === "unknown") {
+    return <span className="storage-pill tone-faint" title="The NAS mover has not reported recently">NAS ?</span>;
   }
   const up = storage.state === "up";
-  const title = up ? `NAS reachable: ${storage.path}` : `NAS unreachable: ${storage.path} (${storage.reason})`;
+  const waiting = (storage.pending_windows || 0) + (storage.pending_negatives || 0);
+  const title = up
+    ? `NAS reachable: ${storage.archive}${waiting ? ` (${waiting} item(s) being moved)` : ""}`
+    : `NAS unreachable: ${storage.archive} (${storage.reason})`;
   return (
     <span className={`storage-pill ${up ? "tone-ok" : "tone-bad"}`} title={title}>
       <span className="storage-dot" aria-hidden="true" />
@@ -19,15 +23,14 @@ export function StoragePill({ storage }) {
 }
 
 export default function StorageNotice({ storage }) {
-  if (storage.loading || storage.unknown || storage.state !== "down" && !storage.on_fallback) return null;
-  let tone = "warn", text;
-  if (storage.state === "down" && storage.on_fallback) {
-    text = `NAS unavailable. New data is being saved to a temporary folder on this machine and moves to the NAS the next time the app starts with it back. Earlier data on the NAS is not visible until then.`;
-  } else if (storage.state === "down") {
-    tone = "bad";
-    text = `NAS connection lost. Saving new data and opening older data may fail until it is back.`;
-  } else {
-    text = `NAS is back. ${storage.pending_files} file(s) saved while it was down are still in the temporary folder. Restart the app to move them to the NAS.`;
-  }
-  return <div className={`storage-banner banner-${tone}`} role="status">{text}</div>;
+  if (storage.loading || storage.unknown || storage.state !== "down") return null;
+  const w = storage.pending_windows || 0;
+  const n = storage.pending_negatives || 0;
+  return (
+    <div className="storage-banner banner-warn" role="status">
+      NAS unreachable. Capture and review keep working on this machine;
+      {" "}{w} confirmed window(s) and {n} older negative frame(s) are waiting to move to the NAS when it is back.
+      Windows already moved to the NAS cannot be opened until then.
+    </div>
+  );
 }

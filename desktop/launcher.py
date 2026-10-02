@@ -90,11 +90,10 @@ def main() -> int:
         box["httpd"] = httpd
         ready.set()
 
-    # The data folder picked in Settings wins; --sites-root is only the default for when none was.
-    from settings import SettingsStore
+    # The local working tree is always <home>/sites; the data folder picked in Settings is the NAS archive
+    # that finished data is moved to (backend/archive.py).
     settings_path, models_dir = home / "settings.yaml", home / "models"
-    picked = SettingsStore(settings_path, models_dir).get()["data_dir"]
-    sites_root = ["--sites-root", str(home / "sites")] if not picked else []
+    sites_root = ["--sites-root", str(home / "sites")]
 
     def serve():
         try:

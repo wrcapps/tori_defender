@@ -180,8 +180,10 @@ def decide_confirmed(window_dir: Path, facts: WindowFacts) -> tuple[str, str] | 
 
 
 def reconcile(layout: SiteLayout, retention: Retention, log_bucket: Path, by: str = "system",
-              apply: bool = True, now: float | None = None, max_moves: int = MAX_MOVES) -> list[dict]:
+              apply: bool = True, now: float | None = None, max_moves: int = MAX_MOVES,
+              only: str | None = None) -> list[dict]:
     """Decide every inbox window and (if `apply`) move it. Returns what it did / would do.
+    `only` ("day/window") limits the confirmed-window check to that one window (a decision just made on it).
 
     The records are read once for the pass, but each move is re-decided from a fresh read just
     before it happens: a verdict saved by another process in between cancels the move."""
@@ -190,8 +192,11 @@ def reconcile(layout: SiteLayout, retention: Retention, log_bucket: Path, by: st
     actions: list[dict] = []
     moved = 0
     candidates = [(d, w, p, False) for d, w, p in layout.iter_windows(layout.inbox)]
-    candidates += [(d, w, p, True) for d, w, p in layout.iter_windows(layout.frames)
-                   if facts.get(f"{d}/{w}", WindowFacts()).rejected]       # only rejected ones: cheap filter
+    for wid in ([only] if only else [w for w, f in facts.items() if f.rejected]):
+        day, _, window = wid.partition("/")
+        found = layout.window_dir(day, window) if facts.get(wid, WindowFacts()).rejected else None
+        if found is not None and found.parent.parent != layout.inbox:
+            candidates.append((day, window, found, True))                   # confirmed, local or archived
     for day, window, path, confirmed in candidates:
         if moved >= max_moves:
             break
@@ -211,12 +216,21 @@ def reconcile(layout: SiteLayout, retention: Retention, log_bucket: Path, by: st
             if verdict is None:
                 continue
         to, reason = verdict
+        archived = layout.is_archived(path)
         action = {"day": day, "window": window, "from": "confirmed" if confirmed else "pending", "to": to,
                   "reason": reason}
         if apply:
             try:
                 if to == "confirmed":
                     layout.move(day, window, layout.frames)
+                elif archived:
+                    # On the NAS a rename into the local trash would be a copy across filesystems, which this
+                    # layout never does -- an archived window that is rejected is deleted where it lies.
+                    shutil.rmtree(path)
+                    for bucket in layout.buckets():
+                        for sub in ("crops", "proxies"):
+                            shutil.rmtree(bucket / sub / day / window, ignore_errors=True)
+                    action["to"] = "purged"
                 else:
                     layout.move(day, window, layout.trash, purge_date_for(retention, now))
                     action["to"] = "trash"
@@ -285,7 +299,7 @@ def restore(layout: SiteLayout, day: str, window: str, log_bucket: Path, by: str
     if src is None:
         raise FileNotFoundError(f"{day}/{window} is not in trash")
     dest = layout.inbox / day / window
-    if dest.exists() or (layout.frames / day / window).exists():
+    if dest.exists() or layout.window_dir(day, window) is not None:
         raise FileExistsError(f"{day}/{window} already exists")
     dest.parent.mkdir(parents=True, exist_ok=True)
     import os
@@ -322,7 +336,9 @@ def check(layout: SiteLayout) -> list[tuple[str, str]]:
             if entry.name not in BUCKET_FILES and not entry.name.startswith(("verdicts.json.", "manual_boxes.jsonl.", ".")):
                 issues.append(("warn", f"unexpected file in bucket {bucket.name}: {entry.name}"))
     seen: dict[str, str] = {}
-    for root_name, root in ((INBOX, layout.inbox), (FRAMES, layout.frames)):
+    for root_name, root in ((INBOX, layout.inbox), (FRAMES, layout.frames), ("archive", layout.archive_frames)):
+        if root is None:
+            continue
         for day, window, path in layout.iter_windows(root):
             wid = f"{day}/{window}"
             if wid in seen:

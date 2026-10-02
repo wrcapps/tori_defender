@@ -53,7 +53,7 @@ Sign in with the name and password you created.
 The first time you sign in, the app asks two things:
 
 1. **Model** – pick one of the files you put in the `models` folder.
-2. **Data folder** – where the NAS is. Examples:
+2. **Data folder** – the NAS folder where confirmed footage is archived (the app works on its own disk and moves finished data there). Examples:
    - Windows: `Z:\Dataset` or `\\192.168.1.138\Pasari\Dataset`
    - Linux: the **`tori_sites`** folder inside the app folder (`install.sh` created it for you)
 
@@ -160,7 +160,8 @@ The service log says which one is in use ("NVDEC decode: available" or "not used
 - Details on disk layout, GPU and bandwidth planning: [docs/DATA_LAYOUT.md](docs/DATA_LAYOUT.md), [docs/ADVANCED.md](docs/ADVANCED.md).
 - Own cameras: copy `config.example.yaml` to `config.yaml` and fill in the site name, the cameras and their passwords.
 - Choices made in the app (model, data folder) are saved in `settings.yaml` (next to the app; a `device:` key from an older version is ignored). Without that file, the app uses `config.yaml`
-  and `--weights`. `--sites-root` on the command line overrides the data folder from Settings.
+  and `--weights`. `--archive-root` on the command line overrides the data folder from Settings; `--sites-root` moves the local working tree (default `sites/` next to the app).
+- Capture and review work on the local disk; confirmed windows and negatives older than 24 h are moved to the data folder (the NAS) in the background, see [docs/DATA_LAYOUT.md](docs/DATA_LAYOUT.md) §0.
 - Two roles: **operator** (everything) and **client** (Live, Sightings, Species; read-only). Add `--role client` to give a read-only login.
 - Packaged Windows app (`BirdReview.exe`): see [desktop/README.md](desktop/README.md).
 - Training-label audit: start with `--dataset path/to/data.yaml`.
