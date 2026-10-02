@@ -130,17 +130,6 @@ camera changes later, edit `config.yaml` by hand (there is no screen for it yet)
 
 ---
 
-## If something goes wrong
-
-| Problem | What to do |
-|---|---|
-| Detection is slow and the computer has an NVIDIA card | The card is not being used. Re-run the installer (it checks), or see "GPU and the install scripts" below. |
-| Folder "does not exist" | The NAS is not connected. Connect it, then try again. |
-| Cameras show video but no boxes | No model is chosen. Open **Settings** and pick one. |
-| Detection is very slow | The computer has no usable GPU, so it runs on the CPU. This is normal; use a computer with an NVIDIA GPU for many cameras. |
-| Cannot sign in | Ask your administrator to create your login (step 1, point 4). |
-
----
 
 ## GPU and the install scripts
 
@@ -155,12 +144,3 @@ camera changes later, edit `config.yaml` by hand (there is no screen for it yet)
 The service log says which one is in use ("NVDEC decode: available" or "not used (...)"), and
 `logs/acquisition/status.json` shows `decoders: {nvdec: N, cpu: M}`. `live.decoder: cpu` in `config.yaml` forces the CPU.
 
-## For technical staff
-
-- Details on disk layout, GPU and bandwidth planning: [docs/DATA_LAYOUT.md](docs/DATA_LAYOUT.md), [docs/ADVANCED.md](docs/ADVANCED.md).
-- Own cameras: copy `config.example.yaml` to `config.yaml` and fill in the site name, the cameras and their passwords.
-- Choices made in the app (model, data folder) are saved in `settings.yaml` (next to the app; a `device:` key from an older version is ignored). Without that file, the app uses `config.yaml`
-  and `--weights`. `--sites-root` on the command line overrides the data folder from Settings.
-- Two roles: **operator** (everything) and **client** (Live, Sightings, Species; read-only). Add `--role client` to give a read-only login.
-- Packaged Windows app (`BirdReview.exe`): see [desktop/README.md](desktop/README.md).
-- Training-label audit: start with `--dataset path/to/data.yaml`.
