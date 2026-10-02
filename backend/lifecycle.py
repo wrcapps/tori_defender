@@ -7,10 +7,12 @@
     lifecycle.py restore --sites-root sites --site babadag DAY WINDOW
 
 The rules are deliberately conservative -- this code deletes footage:
-  * only windows in inbox/ are ever decided; frames/ (confirmed, imported, grandfathered) is never touched;
+  * inbox/ windows are decided; a frames/ (confirmed) window moves only if a person has since rejected it, and
+    imported / grandfathered ones without a plain reject are never touched;
   * a window is only decided once capture has CLOSED it (window.json exists);
   * hand work (manual boxes, box edits) and any verdict other than a plain reject protect it;
-  * unreviewed windows expire into trash/ (recoverable for retention.trash_days), they are not deleted;
+  * unreviewed windows never expire unless retention.inbox_days > 0 is set; a rejection is deleted at once
+    unless retention.trash_days > 0 keeps it in trash/ that long;
   * a move is one os.rename; any failure skips that window and is reported;
   * one run moves at most MAX_MOVES windows.
 It reads the records straight from disk, so it never depends on what an app's caches believe.
@@ -134,6 +136,14 @@ def _is_import(window_dir: Path) -> bool:
         return False
 
 
+def _from_negative(window_dir: Path) -> bool:
+    """A negative frame someone sent to review: it waits for that person, whatever inbox_days says."""
+    try:
+        return bool(json.loads((window_dir / "window.json").read_text(encoding="utf-8")).get("from_negative"))
+    except (OSError, json.JSONDecodeError):
+        return False
+
+
 def _age_days(window_dir: Path, now: float) -> float | None:
     try:
         data = json.loads((window_dir / "window.json").read_text(encoding="utf-8"))
@@ -146,7 +156,7 @@ def _age_days(window_dir: Path, now: float) -> float | None:
 def decide(layout: SiteLayout, day: str, window: str, window_dir: Path, facts: WindowFacts,
            retention: Retention, now: float) -> tuple[str, str] | None:
     """('confirmed'|'trash', reason) for an inbox window, or None to leave it where it is."""
-    if not is_closed(window_dir) or _is_import(window_dir):
+    if not is_closed(window_dir) or _is_import(window_dir) or _from_negative(window_dir):
         return None
     if facts.keeps:
         return "confirmed", "keep"
@@ -156,9 +166,17 @@ def decide(layout: SiteLayout, day: str, window: str, window_dir: Path, facts: W
         return "trash", "rejected"
     if not facts.verdicts and not facts.has_meta:
         age = _age_days(window_dir, now)
-        if age is not None and age > retention.inbox_days:
+        if retention.inbox_days > 0 and age is not None and age > retention.inbox_days:
             return "trash", "expired"
     return None
+
+
+def decide_confirmed(window_dir: Path, facts: WindowFacts) -> tuple[str, str] | None:
+    """('trash', 'rejected') for a confirmed window a person has since rejected, else None.
+    Only an explicit plain reject counts: no verdict, a keep, hand work or an import all protect it."""
+    if _is_import(window_dir) or facts.keeps or facts.hand_work:
+        return None
+    return ("trash", "rejected") if facts.rejected else None
 
 
 def reconcile(layout: SiteLayout, retention: Retention, log_bucket: Path, by: str = "system",
@@ -171,22 +189,30 @@ def reconcile(layout: SiteLayout, retention: Retention, log_bucket: Path, by: st
     facts = load_facts(layout)
     actions: list[dict] = []
     moved = 0
-    for day, window, path in list(layout.iter_windows(layout.inbox)):
+    candidates = [(d, w, p, False) for d, w, p in layout.iter_windows(layout.inbox)]
+    candidates += [(d, w, p, True) for d, w, p in layout.iter_windows(layout.frames)
+                   if facts.get(f"{d}/{w}", WindowFacts()).rejected]       # only rejected ones: cheap filter
+    for day, window, path, confirmed in candidates:
         if moved >= max_moves:
             break
-        if layout.trashed_dir(day, window) or (layout.frames / day / window).exists():
+        if layout.trashed_dir(day, window) or (not confirmed and (layout.frames / day / window).exists()):
             actions.append({"day": day, "window": window, "error": "identity exists in two roots; left alone"})
             continue
         wid = f"{day}/{window}"
-        verdict = decide(layout, day, window, path, facts.get(wid, WindowFacts()), retention, now)
+
+        def pick(f):
+            return (decide_confirmed(path, f) if confirmed
+                    else decide(layout, day, window, path, f, retention, now))
+        verdict = pick(facts.get(wid, WindowFacts()))
         if verdict is None:
             continue
         if apply:
-            verdict = decide(layout, day, window, path, load_facts(layout).get(wid, WindowFacts()), retention, now)
+            verdict = pick(load_facts(layout).get(wid, WindowFacts()))
             if verdict is None:
                 continue
         to, reason = verdict
-        action = {"day": day, "window": window, "from": "pending", "to": to, "reason": reason}
+        action = {"day": day, "window": window, "from": "confirmed" if confirmed else "pending", "to": to,
+                  "reason": reason}
         if apply:
             try:
                 if to == "confirmed":
@@ -194,7 +220,7 @@ def reconcile(layout: SiteLayout, retention: Retention, log_bucket: Path, by: st
                 else:
                     layout.move(day, window, layout.trash, purge_date_for(retention, now))
                     action["to"] = "trash"
-                log_event(log_bucket, day=day, window=window, **{"from": "pending", "to": action["to"]},
+                log_event(log_bucket, day=day, window=window, **{"from": action["from"], "to": action["to"]},
                           reason=reason, by=by)
                 moved += 1
             except (OSError, FileNotFoundError, FileExistsError) as exc:

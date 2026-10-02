@@ -75,6 +75,7 @@ from metrics_log import log_metric
 from model_infer import draw_boxes, fit_width, save_crop, write_jpeg
 from segment_feed import SegmentFeed, SegmentHub
 from layout import SiteLayout
+import captured
 from sitepaths import add_sites_root_argument, site_dir, site_root
 from tracker import Linker
 
@@ -225,6 +226,10 @@ class CameraWorker:
         self.idle_preview_interval = 1.0 / float(self.live.get("idle_preview_fps", 0.2))
         self.link_px = float(self.live.get("link_px", 0) or 0)
         self.preroll_frames = int(self.live.get("preroll_frames", 3))
+        # Hard negatives: a few frames per period in which the detector found nothing (default 5 per 2 h).
+        per, period = float(self.live.get("negatives_per_period", 5)), float(self.live.get("negatives_period_s", 7200))
+        self.neg_every = period / per if per > 0 and period > 0 else 0.0     # 0 = off
+        self.next_negative = 0.0                                             # monotonic; first one is due at once
         self.preroll: deque = deque(maxlen=max(1, self.preroll_frames))   # (bgr frame, capture_ts, monotonic)
 
         # control, set by the service
@@ -565,6 +570,13 @@ class CameraWorker:
                       flush=True)
             self._flush_preroll()
             self.window.last_detection = time.monotonic()
+
+        if (self.neg_every > 0 and recording and run_model and not boxes and self.window is None
+                and time.monotonic() >= self.next_negative and site.layout is not None):
+            self.next_negative = time.monotonic() + self.neg_every
+            save_path = captured.negative_path(site.layout, camera.name, stamp)
+            write_jpeg(save_path, as_bgr(frame), self.quality)
+            print(f"[{stamp:%H:%M:%S}] [{camera.name}] negative frame saved ({save_path.name})", flush=True)
 
         if self.window is None and recording and self.preroll_frames > 0:
             # Idle frames stay in a short ring (host memory, not encoded), so the seconds BEFORE a detection

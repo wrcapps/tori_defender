@@ -75,6 +75,7 @@ export const api = {
   recentDetections: () => request("GET", "/api/recent_detections"),
   alerts: () => request("GET", "/api/alerts"),
   acquisition: () => request("GET", "/api/acquisition"),
+  storage: () => request("GET", "/api/storage"),
   setAcquisition: (enabled) => request("POST", "/api/acquisition", { enabled }),
   settings: () => request("GET", "/api/settings"),
   saveSettings: (changes) => request("POST", "/api/settings", changes),
@@ -115,5 +116,9 @@ export const api = {
   // ---- Dataset (M4b) ----
   datasetSummary: () => request("GET", "/api/dataset/summary"),
   datasetItems: (params) => request("GET", `/api/dataset/items?${new URLSearchParams(params)}`),
+  capturedSummary: (site) => request("GET", `/api/captured/summary?${new URLSearchParams({ site })}`),
+  capturedItems: (params) => request("GET", `/api/captured/items?${new URLSearchParams(params)}`),
+  capturedDelete: (site, group, ids) => request("POST", "/api/captured/delete", { site, group, ids }),
+  capturedToReview: (site, id) => request("POST", "/api/captured/to_review", { site, group: "no_detections", ids: [id] }),
   datasetMark: (id, bad) => request("POST", "/api/dataset/mark", { id, bad }),
 };

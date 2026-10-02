@@ -45,3 +45,16 @@ def test_the_control_file_records_the_switch_off(tmp_path):
     m = make(tmp_path, idle=60)
     m._stop_if_abandoned(time.monotonic() + 100)
     assert json.loads(m.control_path.read_text())["enabled"] is False     # so a restart does not resume it
+
+
+def test_a_restart_does_not_resume_acquisition(tmp_path):
+    import json
+    m = CaptureManager(tmp_path, 8.0, {}, idle_stop_s=0)
+    m.dir.mkdir(parents=True, exist_ok=True)
+    m.control_path.write_text(json.dumps({"enabled": True, "viewed": []}))
+    m.start()
+    try:
+        assert m.enabled is False and not m.running()
+        assert json.loads(m.control_path.read_text())["enabled"] is False
+    finally:
+        m.shutdown()

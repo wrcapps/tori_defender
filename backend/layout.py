@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 LIVE, INBOX, FRAMES, TRASH = "live", "inbox", "frames", "trash"
+NEGATIVES = "negatives"        # single frames with no detection, kept as hard negatives
 RECORDS = Path("dataset") / "detections"
 LIFECYCLE_LOG = "lifecycle.jsonl"
 
@@ -30,10 +31,10 @@ BUCKET_FILES = {
     "manual_boxes.jsonl", "box_edits.jsonl", "folder_status.json", "alerts.json", "crops",
     "proxies", "drone_summary.csv",
 }
-SITE_DIRS = {LIVE, INBOX, FRAMES, TRASH, "dataset", "backups"}
+SITE_DIRS = {LIVE, INBOX, FRAMES, TRASH, NEGATIVES, "dataset", "backups"}
 
-DEFAULT_INBOX_DAYS = 3
-DEFAULT_TRASH_DAYS = 7
+DEFAULT_INBOX_DAYS = 0      # 0 = unreviewed windows wait for a person, they never expire
+DEFAULT_TRASH_DAYS = 0      # 0 = a rejection deletes the window right away (no trash period)
 
 
 @dataclass(frozen=True)
@@ -55,10 +56,11 @@ class SiteLayout:
         self.inbox = self.root / INBOX
         self.frames = self.root / FRAMES
         self.trash = self.root / TRASH
+        self.negatives = self.root / NEGATIVES
         self.records = self.root / RECORDS
 
     def ensure(self) -> None:
-        for p in (self.live, self.inbox, self.frames, self.trash, self.records):
+        for p in (self.live, self.inbox, self.frames, self.trash, self.negatives, self.records):
             p.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------- windows

@@ -7,6 +7,8 @@ import NotificationBell from "./NotificationBell.jsx";
 import AcquisitionButton from "./AcquisitionButton.jsx";
 import { useAcquisition } from "../hooks/useAcquisition.js";
 import { useInbox } from "../hooks/useInbox.js";
+import { useStorage } from "../hooks/useStorage.js";
+import StorageNotice, { StoragePill } from "./StorageNotice.jsx";
 import "./Shell.css";
 
 const CLIENT_NAV = [
@@ -34,6 +36,7 @@ export default function Shell() {
   const { events, dismiss, clearAll } = useDetectionEvents();
   const acquisition = useAcquisition();
   const inbox = useInbox(role === "operator");
+  const storage = useStorage();
   // First run: send the operator to the setup once, from wherever they landed.
   const navigate = useNavigate();
   const location = useLocation();
@@ -98,6 +101,7 @@ export default function Shell() {
             reconnecting={acquisition.reconnecting} busy={acquisition.busy}
             onToggle={acquisition.setEnabled}
           />
+          <StoragePill storage={storage} />
           <NotificationBell events={events} onDismiss={dismiss} onClearAll={clearAll} />
           <span className="shell-role" title={`Signed in as ${username}`}>
             {role}
@@ -107,6 +111,8 @@ export default function Shell() {
           </button>
         </div>
       </header>
+
+      <StorageNotice storage={storage} />
 
       <main className="shell-content">
         <Outlet />

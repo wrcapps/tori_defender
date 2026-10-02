@@ -45,6 +45,8 @@ defaults:
   #   preview_fps: 6.0         # how often the Live view's picture refreshes
   #   preview_width: 1280      # size of the Live view's preview image
   #   jpeg_quality: 95         # quality of saved frames
+  #   negatives_per_period: 5  # frames saved with NO detection (hard negatives) per camera per period; 0 = off
+  #   negatives_period_s: 7200 # the period, in seconds
 
 # EDIT THIS. One entry per camera. `name` becomes part of file/folder names,
 # so keep it to letters, digits, dot, dash, underscore.
@@ -73,15 +75,13 @@ cameras:
 #   medium_below_m: 250       # closer than this        -> Medium (deterrent activated)
 #                             # further                 -> Low    (no action)
 
-# Acquisition (the header switch) is remembered across restarts. It switches itself off when no page has been
-# open for this long, so closing the browser does not leave the GPU and the cameras busy for days. 0 = never.
-# Cameras with their own Record flag keep running.
-acquisition:
-  idle_stop_minutes: 10
+# Acquisition (the header switch) starts only when a person turns it on, and runs until a person turns it off.
+# It is not restored after a restart.
 
-# How long detections wait for review, and how long a rejected one can still be restored.
-# See docs/DATA_LAYOUT.md. A window nobody looked at after `inbox_days` moves to trash/ (it is not
-# deleted); trash is emptied `trash_days` after the move. Windows with your verdicts or drawn boxes never expire.
+# What happens to windows. 0 = off, which is the default for both:
+#   inbox_days  unreviewed windows expire into trash after this many days (0: they wait for a person, forever)
+#   trash_days  how long a window you rejected stays recoverable (0: a rejection deletes it immediately)
+# Windows with your verdicts or drawn boxes never expire. See docs/DATA_LAYOUT.md.
 retention:
-  inbox_days: 3
-  trash_days: 7
+  inbox_days: 0
+  trash_days: 0

@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../api.js";
+import CapturedData from "../components/CapturedData.jsx";
 import "./Dataset.css";
 
 const PAGE_SIZE = 48;
 
-export default function Dataset() {
+function LabelAudit() {
   const [summary, setSummary] = useState(null);
   const [category, setCategory] = useState("all");
   const [split, setSplit] = useState("val");
@@ -210,6 +211,25 @@ export default function Dataset() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+export default function Dataset() {
+  const [tab, setTab] = useState("captured");
+  return (
+    <div>
+      <div className="dataset-tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === "captured"}
+                className={tab === "captured" ? "is-current" : ""} onClick={() => setTab("captured")}>
+          Captured data
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "labels"}
+                className={tab === "labels" ? "is-current" : ""} onClick={() => setTab("labels")}>
+          Training labels
+        </button>
+      </div>
+      {tab === "captured" ? <CapturedData /> : <LabelAudit />}
     </div>
   );
 }

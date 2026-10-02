@@ -1,0 +1,31 @@
+.dataset-tabs { display: flex; gap: var(--space-2); padding: var(--space-3) var(--space-5) 0; }
+.dataset-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--text-dim);
+  padding: 6px 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.dataset-tabs button.is-current { color: var(--text); border-bottom-color: var(--brand); }
+
+.captured { padding: var(--space-4) var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); }
+.captured-head { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; }
+.captured-groups { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.captured-groups button { background: var(--surface-2); border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: var(--radius-sm); padding: 6px 12px; font-size: 13px; cursor: pointer; }
+.captured-groups button span { margin-left: 6px; color: var(--text-faint); }
+.captured-groups button.is-current { color: var(--text); border-color: var(--brand); }
+
+.captured-bar { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--text-dim); }
+.captured-help { flex: 1 1 260px; }
+.captured-note { color: var(--warn); }
+.captured-delete { color: var(--danger); }
+.captured-delete:disabled { color: var(--text-faint); }
+
+.captured-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-3); }
+.captured-cell { margin: 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  overflow: hidden; display: flex; flex-direction: column; }
+.captured-cell.is-selected { border-color: var(--danger); }
+.captured-cell img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; cursor: pointer; background: #000; }
+.captured-cell figcaption { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; font-size: 12px; color: var(--text-dim); }
+.captured-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.captured-actions button { font-size: 11px; }
+.captured-empty, .captured-foot { color: var(--text-dim); font-size: 13px; }
+.captured-zoom { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); display: flex; align-items: center;
+  justify-content: center; z-index: 50; cursor: zoom-out; }
+.captured-zoom img { max-width: 95vw; max-height: 95vh; }

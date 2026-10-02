@@ -23,14 +23,18 @@ python backend/lifecycle.py restore --sites-root sites --site <site> DAY WINDOW
     ├── live/<camera>/           EPHEMERAL previews, rewritten in place: latest.jpg, status.json,
     │                            frame_ts.json, metrics.jsonl, recording (a marker file: "save what you see")
     ├── inbox/<day>/<window>/    PENDING — detections waiting for review. Capture writes here, and only here.
-    │                            frame_N.jpg + window.json. Expires after retention.inbox_days (default 3).
+    │                            frame_N.jpg + window.json. Waits for review; expires only if retention.inbox_days > 0 (default 0 = never).
     │                            A window starts a few frames BEFORE the detection (window.json: preroll_frames) and
     │                            ends a few seconds after it.
     ├── frames/<day>/<window>/   CONFIRMED — kept permanently. Same shape as the inbox. Also holds
     │                            imported sessions (Excel import) and all footage from before this layout.
     ├── trash/<purge-date>/<day>/<window>/
     │                            REJECTED or EXPIRED. Recoverable until <purge-date>
-    │                            (retention.trash_days, default 7), then deleted.
+    │                            (retention.trash_days, default 0 = deleted immediately on rejection), then deleted.
+    ├── negatives/<day>/<camera>-<HHMMSS>.jpg
+    │                            hard negatives: single frames the detector found NOTHING in, a few per camera per
+    │                            period (live: negatives_per_period / negatives_period_s, default 5 per 2 h). Reviewed and
+    │                            deleted in the Dataset page; "send to review" turns one into an inbox window.
     ├── backups/<timestamp>/     copies of the records, written by `lifecycle.py migrate --apply`
     └── dataset/detections/<bucket>/     RECORDS of one model bucket (live, drone, …)
         ├── detections.jsonl     what the detector produced; append-only (only the Excel importer rewrites its own bucket)
@@ -67,8 +71,8 @@ Anything else under a site or a bucket is reported by `lifecycle.py check`.
 
 ```
  capture ─► inbox ─ a track is confirmed ───────────────────────► frames           (permanent)
-              │  ─ every track rejected, no hand work ─────────► trash/<date> ─► deleted after trash_days
-              │  ─ nobody looked at it for inbox_days ─────────► trash/<date> ─► deleted after trash_days
+              │  ─ every track rejected, no hand work ─────────► trash/<date> ─► deleted after trash_days (default: at once)
+              │  ─ nobody looked at it for inbox_days (off by default) ► trash/<date> ─► deleted after trash_days
               └─ unsure / only some tracks decided / hand work: stays, and does not expire
 ```
 

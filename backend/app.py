@@ -96,6 +96,8 @@ from model_infer import fit_width, save_crop, write_jpeg
 from risk import LEVELS, RiskPolicy, alert_message, decision_for
 from settings import (DEFAULT_MODELS_DIR, DEFAULT_SETTINGS_PATH, SettingsStore, check_data_dir,
                       detect_devices, device_flag, discover_models, resolve_model)
+import captured
+from datastore import choose_root, storage_status
 from sitepaths import DEFAULT_SITES_ROOT, add_sites_root_argument, site_dir, site_root
 
 HERE = Path(__file__).resolve().parent
@@ -1359,6 +1361,30 @@ def make_handler(sites: dict[str, Site], camera_site: dict[str, Site], default_s
                     return
             self._send(200, cached.read_bytes(), "image/jpeg")
 
+        def _serve_negative(self, path: str) -> None:
+            """/negative/<site>/<day>/<file> (full frame) or /negthumb/... (width-limited, cached)."""
+            thumb = path.startswith("/negthumb/")
+            rest = path[len("/negthumb/" if thumb else "/negative/"):]
+            site_name, _, rel = rest.partition("/")
+            site = resolve_site(unquote(site_name))
+            if site is None or site.layout is None:
+                self._send(404, b"unknown site", "text/plain")
+                return
+            source = self._under(site.layout.negatives, rel)
+            if source is None or not source.is_file():
+                self._send(404, b"not found", "text/plain")
+                return
+            if not thumb:
+                self._serve_file(site.layout.negatives, rel)
+                return
+            cached = site.out / "proxies" / "negatives" / Path(rel)
+            if not cached.is_file() or cached.stat().st_mtime < source.stat().st_mtime:
+                image = cv2.imread(str(source))
+                if image is None or not write_jpeg(cached, fit_width(image, 480), 80):
+                    self._send(404, b"unreadable frame", "text/plain")
+                    return
+            self._send(200, cached.read_bytes(), "image/jpeg")
+
         def _thumb(self, camera: str) -> None:
             """The camera's last-saved frame, as a plain still image.
 
@@ -1827,6 +1853,39 @@ def make_handler(sites: dict[str, Site], camera_site: dict[str, Site], default_s
                 self._json(200, recent_detections(sites))
             elif path == "/api/acquisition":
                 self._json(200, manager.acquisition_status())
+            elif path.startswith("/api/captured/"):
+                # Operator-only: it lists and (via POST) deletes footage.
+                if session["role"] != "operator":
+                    self._json(403, {"error": "operator role required"})
+                elif site is None or site.layout is None:
+                    self._json(404, {"error": f"unknown site {query.get('site')!r}"})
+                elif path == "/api/captured/summary":
+                    self._json(200, captured.summary(site.layout))
+                elif path == "/api/captured/items":
+                    group = query.get("group", ["unreviewed"])[0]
+                    if group not in captured.GROUPS:
+                        self._json(400, {"error": f"group must be one of {', '.join(captured.GROUPS)}"})
+                        return
+                    rows = captured.items(site.layout, group)
+                    offset = max(0, int(query.get("offset", ["0"])[0] or 0))
+                    limit = min(200, max(1, int(query.get("limit", ["48"])[0] or 48)))
+                    page = rows[offset:offset + limit]
+                    for row in page:
+                        if row["kind"] == "negative":
+                            row["thumb"] = f"/negthumb/{quote(site.name)}/{row['day']}/{row['file']}"
+                        else:
+                            n = max(0, int(row["frames"] or 1) // 2)
+                            row["thumb"] = f"/proxy/{quote(site.name)}/{row['day']}/{row['window']}/frame_{n}.jpg"
+                    self._json(200, {"total": len(rows), "items": page})
+                else:
+                    self._json(404, {"error": "not found"})
+            elif path.startswith("/negthumb/") or path.startswith("/negative/"):
+                self._serve_negative(path)
+            elif path == "/api/storage":
+                # Any signed-in user: the banner is for whoever is looking at the screen.
+                rt = runtime or {}
+                self._json(200, storage_status(Path(rt["primary_dir"]) if rt.get("primary_dir") else None,
+                                               Path(rt.get("data_dir") or DEFAULT_SITES_ROOT)))
             elif path in ("/api/settings", "/api/devices", "/api/settings/check_dir"):
                 # Operator-only even to read: it names folders on this machine.
                 if session["role"] != "operator":
@@ -2072,6 +2131,34 @@ def make_handler(sites: dict[str, Site], camera_site: dict[str, Site], default_s
                 self._json(200, {"ok": True, "verdict": decision, "moved": moved,
                                  "lifecycle": window_lifecycle(site, day, window)})
 
+            elif path in ("/api/captured/delete", "/api/captured/to_review"):
+                if site.layout is None:
+                    self._json(404, {"error": "this site has no layout"})
+                    return
+                who = (self._session() or {}).get("username") or "operator"
+                group, ids = payload.get("group"), payload.get("ids")
+                if group not in captured.GROUPS or not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+                    self._json(400, {"error": "expected {site, group, ids: [..]}"})
+                    return
+                with site.lifecycle_lock:
+                    if path == "/api/captured/to_review":
+                        if group != "no_detections" or len(ids) != 1:
+                            self._json(400, {"error": "only a single negative can be sent to review"})
+                            return
+                        try:
+                            wid = captured.negative_to_review(site.layout, ids[0], site.out, who)
+                        except FileNotFoundError as exc:
+                            self._json(404, {"error": str(exc)})
+                            return
+                        site.store.refresh()
+                        self._json(200, {"ok": True, "window": wid})
+                        return
+                    result = (captured.delete_negatives(site.layout, ids) if group == "no_detections"
+                              else captured.delete_windows(site.layout, ids, site.out, who))
+                    if result["deleted"] and group != "no_detections":
+                        site.store.refresh()
+                self._json(200, {"ok": True, **result})
+
             elif path == "/api/review/undo":
                 # Take back a rejection: the window returns to the inbox, its `drop` verdicts are cleared.
                 day, window = payload.get("day"), payload.get("window")
@@ -2247,12 +2334,14 @@ def main(argv: list[str] | None = None, on_ready=None) -> int:
         args.sites_root, data_dir_source = Path(chosen["data_dir"]), "settings"
     else:
         data_dir_source = "default"
-    if args.sites_root and not args.sites_root.is_dir():
+    primary_dir = args.sites_root          # what the user chose; may differ from the root used this run
+    if data_dir_source == "settings":
+        # The picked folder is normally the NAS. If it is down, run on a temporary local folder; the
+        # next start with it back moves that data over first (backend/datastore.py).
+        args.sites_root, data_dir_source = choose_root(args.sites_root)
+    elif args.sites_root and not args.sites_root.is_dir():
         print(f"data folder {args.sites_root} ({data_dir_source}) does not exist -- is the NAS "
               f"mounted? Fix it in Settings or mount it, then restart.", file=sys.stderr)
-        if data_dir_source == "settings":
-            print("falling back to the default folder for this run", file=sys.stderr)
-            args.sites_root, data_dir_source = None, "default (settings folder missing)"
 
     if len(args.config) > 1 and (args.dir or args.frames_root):
         print("--dir/--frames-root only make sense with a single --config; ignoring them",
@@ -2292,9 +2381,8 @@ def main(argv: list[str] | None = None, on_ready=None) -> int:
                   f"{site.config_path} nor --weights) -- Live cannot start capture for "
                   f"this site's cameras until one is set")
 
-    idle_minutes = min((float((s.cfg.get("acquisition") or {}).get("idle_stop_minutes", 10))
-                        for s in sites.values()), default=10.0)
-    manager = CaptureManager(args.capture_logs, args.gpu_fps, weights_by_site, idle_stop_s=idle_minutes * 60)
+    manager = CaptureManager(args.capture_logs, args.gpu_fps, weights_by_site,
+                             idle_stop_s=0)     # once a person starts acquisition it runs until they stop it
     manager.model_choice = resolve_model(chosen["model"], args.models_dir)
     manager.device = "auto"          # GPU when CUDA is usable, otherwise CPU; not a setting
     if chosen["model"] and manager.model_choice is None:
@@ -2321,6 +2409,7 @@ def main(argv: list[str] | None = None, on_ready=None) -> int:
               f"`npm install && npm run build` has been run in {CLIENT_DIST.parent}")
 
     runtime = {"data_dir": str(args.sites_root or DEFAULT_SITES_ROOT), "data_dir_source": data_dir_source,
+               "primary_dir": str(primary_dir) if primary_dir and data_dir_source != "command line" else None,
                "config_weights": next((w for w in weights_by_site.values() if w), None)}
     handler = make_handler(sites, camera_site, default_site, manager,
                            args.proxy_width, args.fps_cap, dataset, users, sessions,

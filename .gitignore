@@ -46,3 +46,6 @@ bench/
 docs/*
 !docs/ADVANCED.md
 !docs/DATA_LAYOUT.md
+
+# Per-installation choices made in the app (model, data folder). Only settings.example.yaml is tracked.
+settings.yaml

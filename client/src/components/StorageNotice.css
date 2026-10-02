@@ -1,0 +1,24 @@
+.storage-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 9px 3px 7px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.storage-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.storage-pill.tone-ok { color: var(--accent); }
+.storage-pill.tone-bad { color: var(--danger); }
+.storage-pill.tone-faint { color: var(--text-faint); }
+
+.storage-banner {
+  padding: var(--space-2) var(--space-5);
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.storage-banner.banner-warn { color: var(--warn); background: rgba(255, 176, 32, 0.08); }
+.storage-banner.banner-bad { color: var(--danger); background: rgba(255, 90, 90, 0.08); }

@@ -230,3 +230,30 @@ def test_failures_do_not_use_up_the_move_cap(tmp_path):
     detections(b, "ok")
     acts = lifecycle.reconcile(lay, RET, b, now=NOW, max_moves=1)
     assert any(a.get("window") == "ok" and a.get("to") == "trash" for a in acts)
+
+
+def test_defaults_never_expire_and_delete_a_rejection_at_once(tmp_path):
+    lay, b = make(tmp_path)
+    ret = Retention()                                  # the shipped defaults
+    old = window(lay, lay.inbox, "old", closed_days_ago=400)
+    window(lay, lay.inbox, "bad", closed_days_ago=0)
+    detections(b, "old"), detections(b, "bad")
+    verdicts(b, **{f"{DAY}/bad/t0001": "drop"})
+    lifecycle.reconcile(lay, ret, b, now=NOW)
+    lifecycle.purge(lay, b)
+    assert old.exists()                                # nobody reviewed it: it waits, however old
+    assert lay.state(DAY, "bad") is None and not list(lay.trash.rglob("frame_0.jpg"))   # gone, not in trash
+
+
+def test_a_confirmed_window_is_deleted_only_when_rejected_afterwards(tmp_path):
+    lay, b = make(tmp_path)
+    ret = Retention()
+    rej = window(lay, lay.frames, "rej", closed_days_ago=50)
+    kept = window(lay, lay.frames, "kept", closed_days_ago=50)
+    plain = window(lay, lay.frames, "plain", closed_days_ago=50)
+    for n in ("rej", "kept", "plain"):
+        detections(b, n)
+    verdicts(b, **{f"{DAY}/rej/t0001": "drop", f"{DAY}/kept/t0001": "keep"})
+    lifecycle.reconcile(lay, ret, b, now=NOW)
+    lifecycle.purge(lay, b)
+    assert not rej.exists() and kept.exists() and plain.exists()

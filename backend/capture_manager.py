@@ -136,10 +136,10 @@ class CaptureManager:
     def start(self) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.reap_orphans()
-        try:
-            self.enabled = bool(json.loads(self.control_path.read_text(encoding="utf-8")).get("enabled"))
-        except (OSError, json.JSONDecodeError):
-            self.enabled = False
+        # Acquisition starts only when a person switches it on. A previous run's `enabled` in
+        # control.json is deliberately NOT restored: a restart (or a crash-loop supervisor) must not
+        # put the cameras and the GPU back to work on its own.
+        self.enabled = False
         with self.lock:
             self._sync()
         self._reaper.start()

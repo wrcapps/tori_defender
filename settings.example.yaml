@@ -1,0 +1,7 @@
+# Per-installation choices, normally written by the app's Settings page / first-run setup.
+# Copy to settings.yaml to preset them; with no settings.yaml the app starts the first-run setup.
+model: null         # a file in models/ (null = whatever config.yaml says)
+data_dir: null      # where site data lives, e.g. /mnt/Tori/BirdReviewApp/sites (null = <app>/sites).
+                    # If this folder is unreachable at start the app runs on a temporary local folder
+                    # and moves that data over at the next start once it is back.
+setup_done: false
